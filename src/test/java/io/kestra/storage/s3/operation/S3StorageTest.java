@@ -113,10 +113,10 @@ class S3StorageTest {
 				is(CharStreams.toString(new InputStreamReader(new FileInputStream(Objects.requireNonNull(resource).getFile()))))
 		          );
 
-		assertThat(storageInterface.size(new URI("/" + prefix + "/storage/put.yml")), is(76L));
+		assertThat(storageInterface.size(new URI("/" + prefix + "/storage/put.yml")), is(66L));
 
 		assertThrows(FileNotFoundException.class, () -> {
-			assertThat(storageInterface.size(new URI("/" + prefix + "/storage/muissing.yml")), is(76L));
+			assertThat(storageInterface.size(new URI("/" + prefix + "/storage/muissing.yml")), is(66L));
 		});
 
 		boolean delete = storageInterface.delete(put);

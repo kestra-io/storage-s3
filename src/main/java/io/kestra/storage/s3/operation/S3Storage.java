@@ -15,8 +15,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Singleton
 @Introspected
@@ -38,15 +38,23 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public InputStream get(URI uri) throws IOException {
 		try {
+			if (!amazonS3.doesObjectExist(s3Properties.getBucket(), uri.getPath())) {
+				throw new FileNotFoundException();
+			}
+
 			return amazonS3.getObject(s3Properties.getBucket(), uri.getPath()).getObjectContent();
 		} catch (AmazonServiceException exception) {
-			throw new FileNotFoundException();
+			throw new IOException(exception);
 		}
 	}
 
 	@Override
 	public Long size(URI uri) throws IOException {
 		try {
+			if (!amazonS3.doesObjectExist(s3Properties.getBucket(), uri.getPath())) {
+				throw new FileNotFoundException();
+			}
+
 			return amazonS3.getObjectMetadata(s3Properties.getBucket(), uri.getPath()).getContentLength();
 		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
@@ -75,6 +83,9 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public boolean delete(URI uri) throws IOException {
 		try {
+			if (!amazonS3.doesObjectExist(s3Properties.getBucket(), uri.getPath())) {
+				return false;
+			}
 			amazonS3.deleteObject(s3Properties.getBucket(), uri.getPath());
 			return true;
 		} catch (AmazonServiceException exception) {
@@ -91,6 +102,11 @@ public class S3Storage implements StorageInterface {
 
 		DeleteObjectsRequest request = new DeleteObjectsRequest(s3Properties.getBucket());
 		request.withKeys(keys.toArray(String[]::new));
+
+		if (keys.isEmpty()) {
+			return new ArrayList<>();
+		}
+
 		try {
 			DeleteObjectsResult result = amazonS3.deleteObjects(request);
 
