@@ -1,7 +1,0 @@
-kestra:
-  storage:
-    type: s3
-    s3:
-      bucket: "kestra-unit-test"
-      region:
-      endpoint:

@@ -1,89 +1,109 @@
 package io.kestra.storage.s3.operation;
 
-import com.amazonaws.AmazonClientException;
+import com.amazonaws.AmazonServiceException;
 import com.amazonaws.SdkClientException;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.*;
-import io.kestra.storage.s3.config.S3Config;
+import io.kestra.core.storages.StorageInterface;
+import io.kestra.storage.s3.config.S3Properties;
+import io.kestra.storage.s3.config.S3StorageEnabled;
+import io.micronaut.core.annotation.Introspected;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Singleton
-
+@Introspected
+@S3StorageEnabled
 @RequiredArgsConstructor
-public class S3Storage implements IS3Storage {
+public class S3Storage implements StorageInterface {
 
 	private final AmazonS3 amazonS3;
-	private final S3Config s3Config;
+	private final S3Properties s3Properties;
 
-	@Override
 	public String createBucket(String bucketName) throws IOException {
-		boolean bucketExistV2 = amazonS3.doesBucketExistV2(bucketName);
-
-		if (bucketExistV2) {
-			throw new IOException("Bucket already exists");
-		}
-		CreateBucketRequest request = new CreateBucketRequest(bucketName);
-
-		return amazonS3.createBucket(request).getName();
-	}
-
-	@Override
-	public InputStream download(String key) throws IOException {
 		try {
-			S3Object object = amazonS3.getObject(s3Config.getBucket(), key);
-			return object.getObjectContent();
-		} catch (AmazonClientException exception) {
+			return amazonS3.createBucket(bucketName).getName();
+		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
 
 	@Override
-	public boolean exists(String key) throws IOException {
+	public InputStream get(URI uri) throws IOException {
 		try {
-			return amazonS3.doesObjectExist(s3Config.getBucket(), key);
-		} catch (AmazonClientException exception) {
+			return amazonS3.getObject(s3Properties.getBucket(), uri.getPath()).getObjectContent();
+		} catch (AmazonServiceException exception) {
+			throw new FileNotFoundException();
+		}
+	}
+
+	@Override
+	public Long size(URI uri) throws IOException {
+		try {
+			return amazonS3.getObjectMetadata(s3Properties.getBucket(), uri.getPath()).getContentLength();
+		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
 
 	@Override
-	public URI upload(String key, InputStream data) throws IOException {
+	public Long lastModifiedTime(URI uri) throws IOException {
 		try {
-			PutObjectResult result = amazonS3.putObject(s3Config.getBucket(), key, data, new ObjectMetadata());
-
-			return amazonS3.getUrl(s3Config.getBucket(), key).toURI();
-		} catch (AmazonClientException | URISyntaxException exception) {
+			return amazonS3.getObjectMetadata(s3Properties.getBucket(), uri.getPath()).getLastModified().getTime();
+		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
 
 	@Override
-	public void delete(String key) throws IOException {
+	public URI put(URI uri, InputStream data) throws IOException {
 		try {
-			amazonS3.deleteObject(s3Config.getBucket(), key);
-		} catch (AmazonClientException exception) {
+			PutObjectResult result = amazonS3.putObject(s3Properties.getBucket(), uri.getPath(), data, new ObjectMetadata());
+			return createUri(uri.getPath());
+		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
 
 	@Override
-	public boolean delete(List<String> keys) throws IOException {
+	public boolean delete(URI uri) throws IOException {
 		try {
-			DeleteObjectsRequest request = new DeleteObjectsRequest(s3Config.getBucket())
-					.withKeys(keys.toArray(String[]::new));
+			amazonS3.deleteObject(s3Properties.getBucket(), uri.getPath());
+			return true;
+		} catch (AmazonServiceException exception) {
+			throw new IOException(exception);
+		} catch (SdkClientException exception) {
+			throw new IOException(exception);
+		}
+	}
 
+	@Override
+	public List<URI> deleteByPrefix(URI storagePrefix) throws IOException {
+		ObjectListing objectListing = amazonS3.listObjects(s3Properties.getBucket(), storagePrefix.getPath());
+		List<String> keys = objectListing.getObjectSummaries().stream().map(S3ObjectSummary::getKey).toList();
+
+		DeleteObjectsRequest request = new DeleteObjectsRequest(s3Properties.getBucket());
+		request.withKeys(keys.toArray(String[]::new));
+		try {
 			DeleteObjectsResult result = amazonS3.deleteObjects(request);
-			return result.isRequesterCharged();
-		} catch (AmazonClientException exception) {
+
+			return result.getDeletedObjects().stream()
+					.map(DeleteObjectsResult.DeletedObject::getKey)
+					.map(S3Storage::createUri)
+					.toList();
+		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
 
+	private static URI createUri(String key) {
+		return URI.create("kestra://%s".formatted(key));
+	}
 }

@@ -97,6 +97,7 @@ dependencies {
     testImplementation "org.testcontainers:junit-jupiter:1.18.3"
     testImplementation "org.testcontainers:testcontainers:1.18.3"
     testImplementation "org.testcontainers:localstack:1.18.3"
+    testImplementation "com.amazonaws:aws-java-sdk-s3:$s3Version"
 }
 
 /**********************************************************************************************************************\
