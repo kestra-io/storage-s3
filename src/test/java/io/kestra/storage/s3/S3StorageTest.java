@@ -2,8 +2,10 @@ package io.kestra.storage.s3;
 
 import io.kestra.core.utils.IdUtils;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.shaded.com.google.common.io.CharStreams;
@@ -24,11 +26,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @MicronautTest
 class S3StorageTest {
+
+    @Inject
+    private static S3Config s3Config;
+
+    @Inject
     private static S3Storage storageInterface;
 
     private static LocalStackContainer localstack;
 
-    private static LocalS3ClientConfig localS3ClientConfig;
+    private static S3ClientFactory s3ClientFactory;
 
     @BeforeAll
     static void setUp() {
@@ -39,8 +46,10 @@ class S3StorageTest {
         localstack.setPortBindings(List.of("4566:4566"));
         localstack.start();
 
-        localS3ClientConfig = new LocalS3ClientConfig(localstack);
-        storageInterface = new S3Storage(localS3ClientConfig.getAmazonS3(), localS3ClientConfig.getConfig());
+        s3ClientFactory = new S3ClientFactory(localstack);
+        s3Config = new S3Config();
+        s3Config.setBucket("kestra-unit-test");
+        storageInterface = new S3Storage(s3ClientFactory.getS3Client(), s3ClientFactory.getAsyncS3Client(), s3Config);
     }
 
     @AfterAll
@@ -156,10 +165,10 @@ class S3StorageTest {
         assertThat(deleted.size(), is(0));
     }
 
-    @BeforeAll
-    static void createBucket() throws Exception {
+    @BeforeEach
+    void createBucket() throws Exception {
         try {
-            storageInterface.createBucket(localS3ClientConfig.getConfig().getBucket());
+            storageInterface.createBucket(s3Config.getBucket());
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

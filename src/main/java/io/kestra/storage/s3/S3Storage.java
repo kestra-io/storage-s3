@@ -1,13 +1,19 @@
 package io.kestra.storage.s3;
 
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.SdkClientException;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.*;
 import io.kestra.core.storages.StorageInterface;
 import io.micronaut.core.annotation.Introspected;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.async.AsyncRequestBody;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.transfer.s3.S3TransferManager;
+import software.amazon.awssdk.transfer.s3.model.Upload;
+import software.amazon.awssdk.transfer.s3.model.UploadRequest;
+import software.amazon.awssdk.utils.builder.SdkBuilder;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -15,19 +21,28 @@ import java.io.InputStream;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 
 @Singleton
 @Introspected
 @S3StorageEnabled
 @RequiredArgsConstructor
 public class S3Storage implements StorageInterface {
-	private final AmazonS3 amazonS3;
+
+	private final S3Client s3Client;
+	private final S3AsyncClient s3AsyncClient;
 	private final S3Config s3Config;
 
 	public String createBucket(String bucketName) throws IOException {
 		try {
-			return amazonS3.createBucket(bucketName).getName();
-		} catch (AmazonServiceException exception) {
+			CreateBucketRequest request = CreateBucketRequest.builder().bucket(bucketName).build();
+			s3Client.createBucket(request);
+			return bucketName;
+		} catch (BucketAlreadyExistsException exception) {
+			throw new IOException(exception);
+		} catch (AwsServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
@@ -35,12 +50,14 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public InputStream get(URI uri) throws IOException {
 		try {
-			if (!amazonS3.doesObjectExist(s3Config.getBucket(), uri.getPath())) {
-				throw new FileNotFoundException();
-			}
-
-			return amazonS3.getObject(s3Config.getBucket(), uri.getPath()).getObjectContent();
-		} catch (AmazonServiceException exception) {
+			GetObjectRequest request = GetObjectRequest.builder()
+					.bucket(s3Config.getBucket())
+					.key(uri.getPath())
+					.build();
+			return s3Client.getObject(request);
+		} catch (NoSuchKeyException exception) {
+			throw new FileNotFoundException();
+		} catch (AwsServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
@@ -48,12 +65,14 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public Long size(URI uri) throws IOException {
 		try {
-			if (!amazonS3.doesObjectExist(s3Config.getBucket(), uri.getPath())) {
-				throw new FileNotFoundException();
-			}
-
-			return amazonS3.getObjectMetadata(s3Config.getBucket(), uri.getPath()).getContentLength();
-		} catch (AmazonServiceException exception) {
+			HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
+					.bucket(s3Config.getBucket())
+					.key(uri.getPath())
+					.build();
+			return s3Client.headObject(headObjectRequest).contentLength();
+		} catch (NoSuchKeyException exception) {
+			throw new FileNotFoundException();
+		} catch (AwsServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
@@ -61,8 +80,14 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public Long lastModifiedTime(URI uri) throws IOException {
 		try {
-			return amazonS3.getObjectMetadata(s3Config.getBucket(), uri.getPath()).getLastModified().getTime();
-		} catch (AmazonServiceException exception) {
+			HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
+					.bucket(s3Config.getBucket())
+					.key(uri.getPath())
+					.build();
+			return s3Client.headObject(headObjectRequest).lastModified().getEpochSecond();
+		} catch (NoSuchKeyException exception) {
+			throw new FileNotFoundException();
+		} catch (AwsServiceException exception) {
 			throw new IOException(exception);
 		}
 	}
@@ -70,22 +95,47 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public URI put(URI uri, InputStream data) throws IOException {
 		try {
-			PutObjectResult result = amazonS3.putObject(s3Config.getBucket(), uri.getPath(), data, new ObjectMetadata());
+			int length = data.available();
+
+			PutObjectRequest request = PutObjectRequest.builder()
+					.bucket(s3Config.getBucket())
+					.key(uri.getPath())
+					.build();
+
+			Optional<Upload> upload;
+			try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
+				UploadRequest.Builder uploadRequest = UploadRequest.builder()
+						.putObjectRequest(request)
+						.requestBody(AsyncRequestBody.fromInputStream(data, (long) length, Executors.newSingleThreadExecutor()));
+
+				upload = Optional.of(transferManager.upload(uploadRequest.build()));
+			}
+
+			PutObjectResponse response = upload.orElseThrow(IOException::new).completionFuture().get().response();
 			return createUri(uri.getPath());
-		} catch (AmazonServiceException exception) {
+		} catch (AwsServiceException exception) {
 			throw new IOException(exception);
+		} catch (ExecutionException | InterruptedException exception) {
+			throw new RuntimeException(exception);
 		}
 	}
 
 	@Override
 	public boolean delete(URI uri) throws IOException {
 		try {
-			if (!amazonS3.doesObjectExist(s3Config.getBucket(), uri.getPath())) {
+			try {
+				lastModifiedTime(uri);
+			} catch (FileNotFoundException exception) {
 				return false;
 			}
-			amazonS3.deleteObject(s3Config.getBucket(), uri.getPath());
-			return true;
-		} catch (AmazonServiceException exception) {
+
+			DeleteObjectRequest request = DeleteObjectRequest.builder()
+					.bucket(s3Config.getBucket())
+					.key(uri.getPath())
+					.build();
+
+			return s3Client.deleteObject(request).sdkHttpResponse().isSuccessful();
+		} catch (AwsServiceException exception) {
 			throw new IOException(exception);
 		} catch (SdkClientException exception) {
 			throw new IOException(exception);
@@ -94,24 +144,37 @@ public class S3Storage implements StorageInterface {
 
 	@Override
 	public List<URI> deleteByPrefix(URI storagePrefix) throws IOException {
-		ObjectListing objectListing = amazonS3.listObjects(s3Config.getBucket(), storagePrefix.getPath());
-		List<String> keys = objectListing.getObjectSummaries().stream().map(S3ObjectSummary::getKey).toList();
+		ListObjectsRequest listRequest = ListObjectsRequest.builder()
+				.bucket(s3Config.getBucket())
+				.prefix(storagePrefix.getPath())
+				.build();
+		ListObjectsResponse objectListing = s3Client.listObjects(listRequest);
 
-		DeleteObjectsRequest request = new DeleteObjectsRequest(s3Config.getBucket());
-		request.withKeys(keys.toArray(String[]::new));
+		List<S3Object> s3Objects = objectListing.getValueForField("Contents", List.class).get();
+
+		List<ObjectIdentifier> keys = s3Objects.stream()
+				.map(S3Object::key)
+				.map(ObjectIdentifier.builder()::key)
+				.map(SdkBuilder::build)
+				.toList();
+
+		DeleteObjectsRequest deleteRequest = DeleteObjectsRequest.builder()
+				.bucket(s3Config.getBucket())
+				.delete(builder -> builder.objects(keys))
+				.build();
 
 		if (keys.isEmpty()) {
 			return new ArrayList<>();
 		}
 
 		try {
-			DeleteObjectsResult result = amazonS3.deleteObjects(request);
+			DeleteObjectsResponse result = s3Client.deleteObjects(deleteRequest);
 
-			return result.getDeletedObjects().stream()
-					.map(DeleteObjectsResult.DeletedObject::getKey)
+			return result.deleted().stream()
+					.map(DeletedObject::key)
 					.map(S3Storage::createUri)
 					.toList();
-		} catch (AmazonServiceException exception) {
+		} catch (AwsServiceException exception) {
 			throw new IOException(exception);
 		}
 	}

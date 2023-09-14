@@ -8,7 +8,7 @@ import lombok.Setter;
 
 @Singleton
 @Getter
-@Builder
+@Setter
 @ConfigurationProperties("kestra.storage.s3")
 public class S3Config {
 	private String bucket;

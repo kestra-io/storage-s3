@@ -1,13 +1,17 @@
 package io.kestra.storage.s3;
 
-import com.amazonaws.auth.*;
-import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import io.micronaut.context.annotation.Bean;
 import io.micronaut.context.annotation.Factory;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
+import software.amazon.awssdk.auth.credentials.*;
+import software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient;
+import software.amazon.awssdk.http.apache.ApacheHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.*;
+import software.amazon.awssdk.services.s3.internal.crt.S3CrtAsyncClient;
+
+import java.net.URI;
 
 @Factory
 @Singleton
@@ -17,29 +21,38 @@ public class S3ClientFactory {
 	private final S3Config s3Config;
 
 	@Bean
-	public AmazonS3 getAmazonS3() {
-		AmazonS3ClientBuilder clientBuilder = AmazonS3ClientBuilder.standard();
+	public S3Client getS3Client() {
+		S3ClientBuilder clientBuilder = S3Client.builder().httpClient(ApacheHttpClient.create());
+
+		if (s3Config.getEndpoint() != null) {
+			clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
+		}
+
+		if (s3Config.getRegion() != null) {
+			clientBuilder.region(Region.of(s3Config.getRegion()));
+		}
+
+		return clientBuilder.credentialsProvider(getCredentials()).build();
+	}
+
+	@Bean
+	public S3AsyncClient getAsyncS3Client() {
+		S3CrtAsyncClientBuilder clientBuilder = S3CrtAsyncClient.builder();
 
 		if (s3Config.getEndpoint() != null && s3Config.getRegion() != null) {
-			AwsClientBuilder.EndpointConfiguration endpointConfiguration =
-					getAWSEndpointConfiguration(s3Config.getEndpoint(), s3Config.getRegion());
-
-			clientBuilder.withEndpointConfiguration(endpointConfiguration);
+			clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
+			clientBuilder.region(Region.of(s3Config.getRegion()));
 		}
 
-		return clientBuilder.withCredentials(getCredentials()).build();
+		return clientBuilder.credentialsProvider(getCredentials()).build();
 	}
 
-	private AwsClientBuilder.EndpointConfiguration getAWSEndpointConfiguration(String awsEndpoint, String awsRegion) {
-		return new AwsClientBuilder.EndpointConfiguration(awsEndpoint, awsRegion);
-	}
-
-	private AWSCredentialsProvider getCredentials() {
+	private AwsCredentialsProvider getCredentials() {
 		if (s3Config.getAccessKey() != null && s3Config.getSecretKey() != null) {
-			AWSCredentials credentials = new BasicAWSCredentials(s3Config.getAccessKey(), s3Config.getSecretKey());
-			return new AWSStaticCredentialsProvider(credentials);
+			AwsCredentials credentials = AwsBasicCredentials.create(s3Config.getAccessKey(), s3Config.getSecretKey());
+			return StaticCredentialsProvider.create(credentials);
 		}
 
-		return new DefaultAWSCredentialsProviderChain();
+		return DefaultCredentialsProvider.create();
 	}
 }
