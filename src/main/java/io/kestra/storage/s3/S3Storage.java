@@ -1,12 +1,10 @@
-package io.kestra.storage.s3.operation;
+package io.kestra.storage.s3;
 
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.SdkClientException;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.*;
 import io.kestra.core.storages.StorageInterface;
-import io.kestra.storage.s3.config.S3Properties;
-import io.kestra.storage.s3.config.S3StorageEnabled;
 import io.micronaut.core.annotation.Introspected;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
@@ -23,9 +21,8 @@ import java.util.List;
 @S3StorageEnabled
 @RequiredArgsConstructor
 public class S3Storage implements StorageInterface {
-
 	private final AmazonS3 amazonS3;
-	private final S3Properties s3Properties;
+	private final S3Config s3Config;
 
 	public String createBucket(String bucketName) throws IOException {
 		try {
@@ -38,11 +35,11 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public InputStream get(URI uri) throws IOException {
 		try {
-			if (!amazonS3.doesObjectExist(s3Properties.getBucket(), uri.getPath())) {
+			if (!amazonS3.doesObjectExist(s3Config.getBucket(), uri.getPath())) {
 				throw new FileNotFoundException();
 			}
 
-			return amazonS3.getObject(s3Properties.getBucket(), uri.getPath()).getObjectContent();
+			return amazonS3.getObject(s3Config.getBucket(), uri.getPath()).getObjectContent();
 		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
 		}
@@ -51,11 +48,11 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public Long size(URI uri) throws IOException {
 		try {
-			if (!amazonS3.doesObjectExist(s3Properties.getBucket(), uri.getPath())) {
+			if (!amazonS3.doesObjectExist(s3Config.getBucket(), uri.getPath())) {
 				throw new FileNotFoundException();
 			}
 
-			return amazonS3.getObjectMetadata(s3Properties.getBucket(), uri.getPath()).getContentLength();
+			return amazonS3.getObjectMetadata(s3Config.getBucket(), uri.getPath()).getContentLength();
 		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
 		}
@@ -64,7 +61,7 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public Long lastModifiedTime(URI uri) throws IOException {
 		try {
-			return amazonS3.getObjectMetadata(s3Properties.getBucket(), uri.getPath()).getLastModified().getTime();
+			return amazonS3.getObjectMetadata(s3Config.getBucket(), uri.getPath()).getLastModified().getTime();
 		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
 		}
@@ -73,7 +70,7 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public URI put(URI uri, InputStream data) throws IOException {
 		try {
-			PutObjectResult result = amazonS3.putObject(s3Properties.getBucket(), uri.getPath(), data, new ObjectMetadata());
+			PutObjectResult result = amazonS3.putObject(s3Config.getBucket(), uri.getPath(), data, new ObjectMetadata());
 			return createUri(uri.getPath());
 		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
@@ -83,10 +80,10 @@ public class S3Storage implements StorageInterface {
 	@Override
 	public boolean delete(URI uri) throws IOException {
 		try {
-			if (!amazonS3.doesObjectExist(s3Properties.getBucket(), uri.getPath())) {
+			if (!amazonS3.doesObjectExist(s3Config.getBucket(), uri.getPath())) {
 				return false;
 			}
-			amazonS3.deleteObject(s3Properties.getBucket(), uri.getPath());
+			amazonS3.deleteObject(s3Config.getBucket(), uri.getPath());
 			return true;
 		} catch (AmazonServiceException exception) {
 			throw new IOException(exception);
@@ -97,10 +94,10 @@ public class S3Storage implements StorageInterface {
 
 	@Override
 	public List<URI> deleteByPrefix(URI storagePrefix) throws IOException {
-		ObjectListing objectListing = amazonS3.listObjects(s3Properties.getBucket(), storagePrefix.getPath());
+		ObjectListing objectListing = amazonS3.listObjects(s3Config.getBucket(), storagePrefix.getPath());
 		List<String> keys = objectListing.getObjectSummaries().stream().map(S3ObjectSummary::getKey).toList();
 
-		DeleteObjectsRequest request = new DeleteObjectsRequest(s3Properties.getBucket());
+		DeleteObjectsRequest request = new DeleteObjectsRequest(s3Config.getBucket());
 		request.withKeys(keys.toArray(String[]::new));
 
 		if (keys.isEmpty()) {

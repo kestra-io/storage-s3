@@ -1,4 +1,4 @@
-package io.kestra.storage.s3.config;
+package io.kestra.storage.s3;
 
 import io.micronaut.context.annotation.Requires;
 

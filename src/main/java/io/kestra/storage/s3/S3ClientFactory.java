@@ -1,4 +1,4 @@
-package io.kestra.storage.s3.config;
+package io.kestra.storage.s3;
 
 import com.amazonaws.auth.*;
 import com.amazonaws.client.builder.AwsClientBuilder;
@@ -13,17 +13,16 @@ import lombok.RequiredArgsConstructor;
 @Singleton
 @S3StorageEnabled
 @RequiredArgsConstructor
-public class S3ClientConfig {
-
-	private final S3Properties s3Properties;
+public class S3ClientFactory {
+	private final S3Config s3Config;
 
 	@Bean
 	public AmazonS3 getAmazonS3() {
 		AmazonS3ClientBuilder clientBuilder = AmazonS3ClientBuilder.standard();
 
-		if (s3Properties.getEndpoint() != null && s3Properties.getRegion() != null) {
+		if (s3Config.getEndpoint() != null && s3Config.getRegion() != null) {
 			AwsClientBuilder.EndpointConfiguration endpointConfiguration =
-					getAWSEndpointConfiguration(s3Properties.getEndpoint(), s3Properties.getRegion());
+					getAWSEndpointConfiguration(s3Config.getEndpoint(), s3Config.getRegion());
 
 			clientBuilder.withEndpointConfiguration(endpointConfiguration);
 		}
@@ -36,11 +35,11 @@ public class S3ClientConfig {
 	}
 
 	private AWSCredentialsProvider getCredentials() {
-		if (s3Properties.getAccessKey() != null && s3Properties.getSecretKey() != null) {
-			AWSCredentials credentials = new BasicAWSCredentials(s3Properties.getAccessKey(), s3Properties.getSecretKey());
+		if (s3Config.getAccessKey() != null && s3Config.getSecretKey() != null) {
+			AWSCredentials credentials = new BasicAWSCredentials(s3Config.getAccessKey(), s3Config.getSecretKey());
 			return new AWSStaticCredentialsProvider(credentials);
 		}
+
 		return new DefaultAWSCredentialsProviderChain();
 	}
-
 }

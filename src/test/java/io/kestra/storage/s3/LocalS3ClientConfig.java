@@ -1,4 +1,4 @@
-package io.kestra.storage.s3.config;
+package io.kestra.storage.s3;
 
 import com.amazonaws.auth.*;
 import com.amazonaws.client.builder.AwsClientBuilder;
@@ -9,15 +9,16 @@ import io.micronaut.context.annotation.Bean;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 
 public class LocalS3ClientConfig {
-
 	private final LocalStackContainer localstack;
 
-	private final S3Properties properties;
+	private final S3Config properties;
 
 	public LocalS3ClientConfig(LocalStackContainer localstack) {
 		this.localstack = localstack;
-		this.properties = new S3Properties();
-		properties.setBucket(IdUtils.create().toLowerCase());
+		this.properties = S3Config
+            .builder()
+            .bucket(IdUtils.create().toLowerCase())
+            .build();
 	}
 
 	@Bean
@@ -34,11 +35,7 @@ public class LocalS3ClientConfig {
 		return clientBuilder.withCredentials(getCredentials()).build();
 	}
 
-	public LocalStackContainer getLocalstack() {
-		return localstack;
-	}
-
-	public S3Properties getProperties() {
+	public S3Config getConfig() {
 		return properties;
 	}
 
@@ -51,7 +48,7 @@ public class LocalS3ClientConfig {
 			AWSCredentials credentials = new BasicAWSCredentials(localstack.getAccessKey(), localstack.getSecretKey());
 			return new AWSStaticCredentialsProvider(credentials);
 		}
+
 		return new DefaultAWSCredentialsProviderChain();
 	}
-
 }

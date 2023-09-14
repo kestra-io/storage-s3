@@ -23,8 +23,8 @@ repositories {
 sourceCompatibility = 17
 targetCompatibility = 17
 
-group "io.kestra.plugin"
-description 'Plugin template for Kestra'
+group "io.kestra.storage"
+description 'S3 storage plugin for Kestra'
 
 tasks.withType(JavaCompile) {
     options.encoding = "UTF-8"
@@ -57,6 +57,8 @@ dependencies {
 
     // libs included in the final jar
     api group: 'com.google.code.gson', name: 'gson', version: '2.10.1'
+    api group: 'javax.xml.bind', name: 'jaxb-api', version: '2.3.1'
+
 }
 
 
