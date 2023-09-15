@@ -23,8 +23,8 @@ repositories {
 sourceCompatibility = 17
 targetCompatibility = 17
 
-group "io.kestra.plugin"
-description 'Plugin template for Kestra'
+group "io.kestra.storage"
+description 'S3 storage plugin for Kestra'
 
 tasks.withType(JavaCompile) {
     options.encoding = "UTF-8"
@@ -38,6 +38,7 @@ configurations.all {
 }
 
 dependencies {
+
     // lombok
     annotationProcessor "org.projectlombok:lombok:$lombokVersion"
     compileOnly "org.projectlombok:lombok:$lombokVersion"
@@ -54,7 +55,13 @@ dependencies {
     compileOnly group: "io.kestra", name: "core", version: kestraVersion
 
     // libs included in the final jar
-    api group: 'com.google.code.gson', name: 'gson', version: '2.10.1'
+    api platform("software.amazon.awssdk:bom:$awsVersion")
+    api group: 'javax.xml.bind', name: 'jaxb-api', version: '2.3.1'
+
+    api 'software.amazon.awssdk:s3'
+    api 'software.amazon.awssdk:s3-transfer-manager'
+    api 'software.amazon.awssdk.crt:aws-crt:0.24.0'
+    api 'software.amazon.awssdk:apache-client'
 }
 
 
@@ -90,6 +97,12 @@ dependencies {
     testImplementation "org.junit.jupiter:junit-jupiter-engine"
     testImplementation "org.hamcrest:hamcrest:2.2"
     testImplementation "org.hamcrest:hamcrest-library:2.2"
+
+    // containers
+    testImplementation "org.testcontainers:junit-jupiter:1.18.3"
+    testImplementation "org.testcontainers:testcontainers:1.18.3"
+    testImplementation "org.testcontainers:localstack:1.18.3"
+    testImplementation "com.amazonaws:aws-java-sdk-s3:$s3Version"
 }
 
 /**********************************************************************************************************************\
