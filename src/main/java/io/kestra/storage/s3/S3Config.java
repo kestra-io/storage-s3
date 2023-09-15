@@ -2,23 +2,20 @@ package io.kestra.storage.s3;
 
 import io.micronaut.context.annotation.ConfigurationProperties;
 import jakarta.inject.Singleton;
-import lombok.Builder;
+import lombok.Data;
 import lombok.Getter;
-import lombok.Setter;
 
 @Singleton
-@Getter
-@Setter
+@Data
 @ConfigurationProperties("kestra.storage.s3")
 public class S3Config {
-	private String bucket;
+	String bucket;
 
-	private String region;
+	String region;
 
-	private String endpoint;
+	String endpoint;
 
-	private String accessKey;
+	String accessKey;
 
-	private String secretKey;
-
+	String secretKey;
 }

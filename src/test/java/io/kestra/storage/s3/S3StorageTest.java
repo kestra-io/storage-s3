@@ -1,6 +1,7 @@
 package io.kestra.storage.s3;
 
 import io.kestra.core.utils.IdUtils;
+import io.micronaut.context.ApplicationContext;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterAll;
@@ -26,16 +27,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @MicronautTest
 class S3StorageTest {
+    @Inject
+    ApplicationContext applicationContext;
 
     @Inject
-    private static S3Config s3Config;
+    S3Config s3Config;
 
-    @Inject
-    private static S3Storage storageInterface;
+    private S3Storage storageInterface;
 
     private static LocalStackContainer localstack;
-
-    private static S3ClientFactory s3ClientFactory;
 
     @BeforeAll
     static void setUp() {
@@ -45,11 +45,22 @@ class S3StorageTest {
             .withServices(LocalStackContainer.Service.S3);
         localstack.setPortBindings(List.of("4566:4566"));
         localstack.start();
+    }
 
-        s3ClientFactory = new S3ClientFactory(localstack);
-        s3Config = new S3Config();
-        s3Config.setBucket("kestra-unit-test");
-        storageInterface = new S3Storage(s3ClientFactory.getS3Client(), s3ClientFactory.getAsyncS3Client(), s3Config);
+    @BeforeEach
+    void createBucket() {
+        s3Config.setRegion(localstack.getRegion());
+        s3Config.setEndpoint(localstack.getEndpoint().toString());
+        s3Config.setAccessKey(localstack.getAccessKey());
+        s3Config.setSecretKey(localstack.getSecretKey());
+
+        storageInterface = new S3Storage(this.s3Config);
+
+        try {
+            storageInterface.createBucket(s3Config.getBucket());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @AfterAll
@@ -70,9 +81,8 @@ class S3StorageTest {
     void get() throws Exception {
         String prefix = IdUtils.create();
 
-        URL resource = S3StorageTest.class.getClassLoader().getResource("application.properties");
-        String content = CharStreams.toString(new InputStreamReader(new FileInputStream(Objects.requireNonNull(resource)
-            .getFile())));
+        URL resource = S3StorageTest.class.getClassLoader().getResource("application.yml");
+        String content = CharStreams.toString(new InputStreamReader(new FileInputStream(Objects.requireNonNull(resource).getFile())));
 
         this.putFile(resource, "/" + prefix + "/storage/get.yml");
 
@@ -100,7 +110,7 @@ class S3StorageTest {
     void put() throws Exception {
         String prefix = IdUtils.create();
 
-        URL resource = S3StorageTest.class.getClassLoader().getResource("application.properties");
+        URL resource = S3StorageTest.class.getClassLoader().getResource("application.yml");
         URI put = this.putFile(resource, "/" + prefix + "/storage/put.yml");
         InputStream get = storageInterface.get(new URI("/" + prefix + "/storage/put.yml"));
 
@@ -110,10 +120,10 @@ class S3StorageTest {
             is(CharStreams.toString(new InputStreamReader(new FileInputStream(Objects.requireNonNull(resource).getFile()))))
         );
 
-        assertThat(storageInterface.size(new URI("/" + prefix + "/storage/put.yml")), is(66L));
+        assertThat(storageInterface.size(new URI("/" + prefix + "/storage/put.yml")), is(74L));
 
         assertThrows(FileNotFoundException.class, () -> {
-            assertThat(storageInterface.size(new URI("/" + prefix + "/storage/muissing.yml")), is(66L));
+            assertThat(storageInterface.size(new URI("/" + prefix + "/storage/muissing.yml")), is(74L));
         });
 
         boolean delete = storageInterface.delete(put);
@@ -131,7 +141,7 @@ class S3StorageTest {
     void deleteByPrefix() throws Exception {
         String prefix = IdUtils.create();
 
-        URL resource = S3StorageTest.class.getClassLoader().getResource("application.properties");
+        URL resource = S3StorageTest.class.getClassLoader().getResource("application.yml");
 
         List<String> path = Arrays.asList(
             "/" + prefix + "/storage/root.yml",
@@ -163,14 +173,5 @@ class S3StorageTest {
 
         List<URI> deleted = storageInterface.deleteByPrefix(new URI("/" + prefix + "/storage/"));
         assertThat(deleted.size(), is(0));
-    }
-
-    @BeforeEach
-    void createBucket() throws Exception {
-        try {
-            storageInterface.createBucket(s3Config.getBucket());
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
     }
 }
