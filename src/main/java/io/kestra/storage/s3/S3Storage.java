@@ -191,6 +191,9 @@ public class S3Storage implements StorageInterface {
     }
 
     private String getPath(String tenantId, URI uri) {
+        if (tenantId == null) {
+            return uri.getPath();
+        }
         return "/" + tenantId + uri.getPath();
     }
     private static URI createUri(String key) {
