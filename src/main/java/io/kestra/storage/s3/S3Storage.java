@@ -55,11 +55,11 @@ public class S3Storage implements StorageInterface {
     }
 
     @Override
-    public InputStream get(URI uri) throws IOException {
+    public InputStream get(String tenantId, URI uri) throws IOException {
         try {
             GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(s3Config.getBucket())
-                .key(uri.getPath())
+                .key(getPath(tenantId, uri))
                 .build();
             return s3Client.getObject(request);
         } catch (NoSuchKeyException exception) {
@@ -70,11 +70,11 @@ public class S3Storage implements StorageInterface {
     }
 
     @Override
-    public Long size(URI uri) throws IOException {
+    public Long size(String tenantId, URI uri) throws IOException {
         try {
             HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
                 .bucket(s3Config.getBucket())
-                .key(uri.getPath())
+                .key(getPath(tenantId, uri))
                 .build();
             return s3Client.headObject(headObjectRequest).contentLength();
         } catch (NoSuchKeyException exception) {
@@ -85,11 +85,11 @@ public class S3Storage implements StorageInterface {
     }
 
     @Override
-    public Long lastModifiedTime(URI uri) throws IOException {
+    public Long lastModifiedTime(String tenantId, URI uri) throws IOException {
         try {
             HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
                 .bucket(s3Config.getBucket())
-                .key(uri.getPath())
+                .key(getPath(tenantId, uri))
                 .build();
             return s3Client.headObject(headObjectRequest).lastModified().getEpochSecond();
         } catch (NoSuchKeyException exception) {
@@ -100,13 +100,13 @@ public class S3Storage implements StorageInterface {
     }
 
     @Override
-    public URI put(URI uri, InputStream data) throws IOException {
+    public URI put(String tenantId, URI uri, InputStream data) throws IOException {
         try {
             int length = data.available();
 
             PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(s3Config.getBucket())
-                .key(uri.getPath())
+                .key(getPath(tenantId, uri))
                 .build();
 
             Optional<Upload> upload;
@@ -132,17 +132,17 @@ public class S3Storage implements StorageInterface {
     }
 
     @Override
-    public boolean delete(URI uri) throws IOException {
+    public boolean delete(String tenantId, URI uri) throws IOException {
         try {
             try {
-                lastModifiedTime(uri);
+                lastModifiedTime(tenantId, uri);
             } catch (FileNotFoundException exception) {
                 return false;
             }
 
             DeleteObjectRequest request = DeleteObjectRequest.builder()
                 .bucket(s3Config.getBucket())
-                .key(uri.getPath())
+                .key(getPath(tenantId, uri))
                 .build();
 
             return s3Client.deleteObject(request).sdkHttpResponse().isSuccessful();
@@ -154,10 +154,10 @@ public class S3Storage implements StorageInterface {
     }
 
     @Override
-    public List<URI> deleteByPrefix(URI storagePrefix) throws IOException {
+    public List<URI> deleteByPrefix(String tenantId, URI storagePrefix) throws IOException {
         ListObjectsRequest listRequest = ListObjectsRequest.builder()
             .bucket(s3Config.getBucket())
-            .prefix(storagePrefix.getPath())
+            .prefix(getPath(tenantId, storagePrefix))
             .build();
         ListObjectsResponse objectListing = s3Client.listObjects(listRequest);
 
@@ -183,13 +183,16 @@ public class S3Storage implements StorageInterface {
 
             return result.deleted().stream()
                 .map(DeletedObject::key)
-                .map(S3Storage::createUri)
+                .map(key -> createUri(key.replace(tenantId + "/", "")))
                 .toList();
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
     }
 
+    private String getPath(String tenantId, URI uri) {
+        return "/" + tenantId + uri.getPath();
+    }
     private static URI createUri(String key) {
         return URI.create("kestra://%s".formatted(key));
     }
