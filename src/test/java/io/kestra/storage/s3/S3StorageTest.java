@@ -84,6 +84,18 @@ class S3StorageTest {
         String prefix = IdUtils.create();
         String tenantId = IdUtils.create();
 
+        get(tenantId, prefix);
+    }
+
+    @Test
+    void getNoTenant() throws Exception {
+        String prefix = IdUtils.create();
+        String tenantId = null;
+
+        get(tenantId, prefix);
+    }
+
+    private void get(String tenantId, String prefix) throws Exception {
         URL resource = S3StorageTest.class.getClassLoader().getResource("application.yml");
         String content = CharStreams.toString(new InputStreamReader(new FileInputStream(Objects.requireNonNull(resource).getFile())));
 
@@ -147,6 +159,18 @@ class S3StorageTest {
         String prefix = IdUtils.create();
         String tenantId = IdUtils.create();
 
+        deleteByPrefix(prefix, tenantId);
+    }
+
+    @Test
+    void deleteByPrefixNoTenant() throws Exception {
+        String prefix = IdUtils.create();
+        String tenantId = null;
+
+        deleteByPrefix(prefix, tenantId);
+    }
+
+    private void deleteByPrefix(String prefix, String tenantId) throws Exception {
         URL resource = S3StorageTest.class.getClassLoader().getResource("application.yml");
 
         List<String> path = Arrays.asList(
