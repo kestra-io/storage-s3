@@ -3,4 +3,7 @@ kestra:
     type: s3
     s3:
       bucket: "kestra-unit-test"
-
+      accessKey: "accesskey"
+      secretKey: "secretkey"
+      region: "eu-west-3"
+      endpoint: "http://127.0.0.1:4566"
