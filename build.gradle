@@ -60,7 +60,7 @@ dependencies {
 
     api 'software.amazon.awssdk:s3'
     api 'software.amazon.awssdk:s3-transfer-manager'
-    api 'software.amazon.awssdk.crt:aws-crt:0.24.0'
+    api 'software.amazon.awssdk.crt:aws-crt:0.28.0'
     api 'software.amazon.awssdk:apache-client'
     api 'software.amazon.awssdk:sts'
 }
