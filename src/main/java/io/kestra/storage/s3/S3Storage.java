@@ -64,13 +64,14 @@ public class S3Storage implements StorageInterface {
         return get(path);
     }
 
-    private ResponseInputStream<GetObjectResponse> get(String path) throws IOException {
+    private InputStream get(String path) throws IOException {
         try {
             GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(s3Config.getBucket())
                 .key(path)
                 .build();
-            return s3Client.getObject(request);
+            ResponseInputStream<GetObjectResponse> inputStream = s3Client.getObject(request);
+            return inputStream.response().contentLength() == 0 ? InputStream.nullInputStream() : inputStream;
         } catch (NoSuchKeyException exception) {
             throw new FileNotFoundException();
         } catch (AwsServiceException exception) {
