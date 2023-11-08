@@ -337,7 +337,7 @@ public class S3Storage implements StorageInterface {
 
     private String getPath(String tenantId, URI uri) {
         if (uri == null) {
-            return "/";
+            uri = URI.create("/");
         }
 
         parentTraversalGuard(uri);
