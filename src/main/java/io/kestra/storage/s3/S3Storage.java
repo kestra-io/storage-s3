@@ -82,7 +82,7 @@ public class S3Storage implements StorageInterface {
     @Override
     public List<FileAttributes> list(String tenantId, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
-        String prefix = (path.endsWith("/")) ? path : path + "/";
+        String prefix = path.endsWith("/") ? path : path + "/";
         try {
             ListObjectsV2Request request = ListObjectsV2Request.builder()
                 .bucket(s3Config.getBucket())
@@ -161,7 +161,8 @@ public class S3Storage implements StorageInterface {
                 .key(path)
                 .build();
             S3FileAttributes.S3FileAttributesBuilder builder = S3FileAttributes.builder()
-                .fileName(Path.of(path).getFileName().toString())
+                .fileName(Optional.ofNullable(Path.of(path).getFileName()).map(Path::toString)
+                    .orElse("/"))
                 .head(s3Client.headObject(headObjectRequest));
             if (path.endsWith("/")) {
                 builder.isDirectory(true);
@@ -230,16 +231,19 @@ public class S3Storage implements StorageInterface {
     }
 
     private void mkdirs(String path) throws IOException {
+        path = path.replaceAll("^/*", "");
+        String[] directories = path.split("/");
+        StringBuilder aggregatedPath = new StringBuilder("/");
         try {
-            if (!path.endsWith("/") && path.lastIndexOf('/') > 0) {
-                path = path.substring(0, path.lastIndexOf('/') + 1);
+            // perform 1 put request per parent directory in the path
+            for (int i = 0; i <= directories.length - (path.endsWith("/") ? 1 : 2); i++) {
+                aggregatedPath.append(directories[i]).append("/");
+                PutObjectRequest putRequest = PutObjectRequest.builder()
+                    .bucket(s3Config.getBucket())
+                    .key(aggregatedPath.toString())
+                    .build();
+                s3Client.putObject(putRequest, RequestBody.empty());
             }
-
-            PutObjectRequest putRequest = PutObjectRequest.builder()
-                .bucket(s3Config.getBucket())
-                .key(path)
-                .build();
-            s3Client.putObject(putRequest, RequestBody.empty());
         } catch (AwsServiceException | SdkClientException exception) {
             throw new IOException(exception);
         }
@@ -332,11 +336,20 @@ public class S3Storage implements StorageInterface {
     }
 
     private String getPath(String tenantId, URI uri) {
-        parentTraversalGuard(uri);
-        if (tenantId == null) {
-            return uri.getPath();
+        if (uri == null) {
+            return "/";
         }
-        return "/" + tenantId + uri.getPath();
+
+        parentTraversalGuard(uri);
+        String path = uri.getPath();
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
+
+        if (tenantId == null) {
+            return path;
+        }
+        return "/" + tenantId + path;
     }
 
     // Traversal does not work with s3 but it just return empty objects so throwing is more explicit
