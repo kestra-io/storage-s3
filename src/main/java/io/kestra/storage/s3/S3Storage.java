@@ -98,10 +98,9 @@ public class S3Storage implements StorageInterface {
                 })
                 .map(throwFunction(this::getFileAttributes))
                 .toList();
-            if (list.isEmpty()) {
-                // s3 does not handle directory deleting with a prefix that does not exist will just delete nothing
-                // Deleting an "empty directory" will at least return the directory name
-                throw new FileNotFoundException(uri + " (Not Found)");
+            if(list.isEmpty()) {
+                // this will throw FileNotFound if there is no directory
+                this.getAttributes(tenantId, uri);
             }
             return list;
         } catch (NoSuchKeyException exception) {
