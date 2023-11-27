@@ -29,6 +29,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.stream.Stream;
 
 import static io.kestra.core.utils.Rethrow.throwFunction;
 
@@ -64,6 +65,16 @@ public class S3Storage implements StorageInterface {
         return get(path);
     }
 
+    @Override
+    public List<URI> filesByPrefix(String tenantId, URI prefix) {
+        String path = getPath(tenantId, prefix);
+        return keysForPrefix(path, true)
+            // keep only files
+            .filter(key -> !key.endsWith("/"))
+            .map(key -> URI.create("kestra://" + prefix.getPath() + key.substring(path.length())))
+            .toList();
+    }
+
     private InputStream get(String path) throws IOException {
         try {
             GetObjectRequest request = GetObjectRequest.builder()
@@ -91,21 +102,10 @@ public class S3Storage implements StorageInterface {
         String path = getPath(tenantId, uri);
         String prefix = path.endsWith("/") ? path : path + "/";
         try {
-            ListObjectsV2Request request = ListObjectsV2Request.builder()
-                .bucket(s3Config.getBucket())
-                .prefix(prefix)
-                .build();
-            List<S3Object> contents = s3Client.listObjectsV2(request).contents();
-            List<FileAttributes> list = contents.stream()
-                .map(S3Object::key)
-                .filter(key -> {
-                    key = key.substring(prefix.length());
-                    // Remove recursive result and requested dir
-                    return !key.isEmpty() && !Objects.equals(key, prefix) && Path.of(key).getParent() == null;
-                })
+            List<FileAttributes> list = keysForPrefix(prefix, false)
                 .map(throwFunction(this::getFileAttributes))
                 .toList();
-            if(list.isEmpty()) {
+            if (list.isEmpty()) {
                 // this will throw FileNotFound if there is no directory
                 this.getAttributes(tenantId, uri);
             }
@@ -115,6 +115,23 @@ public class S3Storage implements StorageInterface {
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
+    }
+
+    private Stream<String> keysForPrefix(String prefix, boolean recursive) {
+        ListObjectsV2Request request = ListObjectsV2Request.builder()
+            .bucket(s3Config.getBucket())
+            .prefix(prefix)
+            .build();
+        List<S3Object> contents = s3Client.listObjectsV2(request).contents();
+        return contents.stream()
+            .map(S3Object::key)
+            .filter(key -> {
+                key = key.substring(prefix.length());
+                // Remove recursive result and requested dir
+                return !key.isEmpty()
+                    && !Objects.equals(key, prefix)
+                    && (recursive || Path.of(key).getParent() == null);
+            });
     }
 
     @Override
