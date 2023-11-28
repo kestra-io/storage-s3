@@ -211,7 +211,26 @@ public class S3Storage implements StorageInterface {
 
     @Override
     public boolean delete(String tenantId, URI uri) throws IOException {
-        return !deleteByPrefix(tenantId, uri).isEmpty();
+        FileAttributes fileAttributes;
+        try {
+            fileAttributes = getAttributes(tenantId, uri);
+        } catch (FileNotFoundException e) {
+            return false;
+        }
+        if (fileAttributes.getType() == FileAttributes.FileType.Directory) {
+            deleteByPrefix(tenantId, uri.getPath().endsWith("/") ? uri : URI.create(uri + "/"));
+        }
+
+        return deleteSingleObject(getPath(tenantId, uri));
+    }
+
+    private boolean deleteSingleObject(String path) {
+        DeleteObjectRequest deleteRequest = DeleteObjectRequest.builder()
+            .bucket(s3Config.getBucket())
+            .key(path)
+            .build();
+
+        return s3Client.deleteObject(deleteRequest).sdkHttpResponse().isSuccessful();
     }
 
     @Override
@@ -289,11 +308,7 @@ public class S3Storage implements StorageInterface {
             .build();
         s3Client.copyObject(copyRequest);
 
-        DeleteObjectRequest deleteRequest = DeleteObjectRequest.builder()
-            .bucket(s3Config.getBucket())
-            .key(oldKey)
-            .build();
-        s3Client.deleteObject(deleteRequest);
+        deleteSingleObject(oldKey);
     }
 
     @Override
