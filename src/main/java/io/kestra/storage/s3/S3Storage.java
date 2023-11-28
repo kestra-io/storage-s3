@@ -71,7 +71,14 @@ public class S3Storage implements StorageInterface {
                 .key(path)
                 .build();
             ResponseInputStream<GetObjectResponse> inputStream = s3Client.getObject(request);
-            return inputStream.response().contentLength() == 0 ? InputStream.nullInputStream() : inputStream;
+            boolean isEmpty = inputStream.response().contentLength() == 0;
+            if(isEmpty) {
+                inputStream.close();
+
+                return InputStream.nullInputStream();
+            }
+
+            return inputStream;
         } catch (NoSuchKeyException exception) {
             throw new FileNotFoundException();
         } catch (AwsServiceException exception) {
