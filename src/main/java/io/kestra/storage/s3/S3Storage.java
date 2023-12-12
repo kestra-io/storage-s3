@@ -66,11 +66,9 @@ public class S3Storage implements StorageInterface {
     }
 
     @Override
-    public List<URI> filesByPrefix(String tenantId, URI prefix) {
+    public List<URI> allByPrefix(String tenantId, URI prefix, boolean includeDirectories) {
         String path = getPath(tenantId, prefix);
-        return keysForPrefix(path, true)
-            // keep only files
-            .filter(key -> !key.endsWith("/"))
+        return keysForPrefix(path, true, includeDirectories)
             .map(key -> URI.create("kestra://" + prefix.getPath() + key.substring(path.length())))
             .toList();
     }
@@ -102,7 +100,7 @@ public class S3Storage implements StorageInterface {
         String path = getPath(tenantId, uri);
         String prefix = path.endsWith("/") ? path : path + "/";
         try {
-            List<FileAttributes> list = keysForPrefix(prefix, false)
+            List<FileAttributes> list = keysForPrefix(prefix, false, true)
                 .map(throwFunction(this::getFileAttributes))
                 .toList();
             if (list.isEmpty()) {
@@ -117,7 +115,7 @@ public class S3Storage implements StorageInterface {
         }
     }
 
-    private Stream<String> keysForPrefix(String prefix, boolean recursive) {
+    private Stream<String> keysForPrefix(String prefix, boolean recursive, boolean includeDirectories) {
         ListObjectsV2Request request = ListObjectsV2Request.builder()
             .bucket(s3Config.getBucket())
             .prefix(prefix)
@@ -130,7 +128,9 @@ public class S3Storage implements StorageInterface {
                 // Remove recursive result and requested dir
                 return !key.isEmpty()
                     && !Objects.equals(key, prefix)
-                    && (recursive || Path.of(key).getParent() == null);
+                    && !key.equals("/")
+                    && (recursive || Path.of(key).getParent() == null)
+                    && (includeDirectories || !key.endsWith("/"));
             });
     }
 
