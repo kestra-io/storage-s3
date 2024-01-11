@@ -135,36 +135,6 @@ public class S3Storage implements StorageInterface {
     }
 
     @Override
-    public Long size(String tenantId, URI uri) throws IOException {
-        try {
-            HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
-                .bucket(s3Config.getBucket())
-                .key(getPath(tenantId, uri))
-                .build();
-            return s3Client.headObject(headObjectRequest).contentLength();
-        } catch (NoSuchKeyException exception) {
-            throw new FileNotFoundException();
-        } catch (AwsServiceException exception) {
-            throw new IOException(exception);
-        }
-    }
-
-    @Override
-    public Long lastModifiedTime(String tenantId, URI uri) throws IOException {
-        try {
-            HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
-                .bucket(s3Config.getBucket())
-                .key(getPath(tenantId, uri))
-                .build();
-            return s3Client.headObject(headObjectRequest).lastModified().getEpochSecond();
-        } catch (NoSuchKeyException exception) {
-            throw new FileNotFoundException();
-        } catch (AwsServiceException exception) {
-            throw new IOException(exception);
-        }
-    }
-
-    @Override
     public FileAttributes getAttributes(String tenantId, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
         try {
