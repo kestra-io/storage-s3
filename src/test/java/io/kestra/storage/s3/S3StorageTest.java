@@ -26,7 +26,7 @@ class S3StorageTest extends StorageTestSuite {
 
     @BeforeAll
     static void startLocalstack() {
-        localstack = new LocalStackContainer(DockerImageName.parse("localstack/localstack:1.4.0"));
+        localstack = new LocalStackContainer(DockerImageName.parse("localstack/localstack:2.3.2"));
         // some tests use a real flow with hardcoded configuration, so we have to fix the binding port
         localstack.setPortBindings(java.util.List.of("4566:4566"));
         localstack.start();
