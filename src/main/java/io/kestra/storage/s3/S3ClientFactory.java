@@ -1,54 +1,144 @@
 package io.kestra.storage.s3;
 
-import software.amazon.awssdk.auth.credentials.*;
+import org.apache.commons.lang3.StringUtils;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.SdkHttpClient;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.S3CrtAsyncClientBuilder;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.StsClientBuilder;
+import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider;
+import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 
 import java.net.URI;
 
-public class S3ClientFactory {
-	public static S3Client getS3Client(S3Config s3Config) {
-		S3ClientBuilder clientBuilder = S3Client.builder().httpClient(ApacheHttpClient.create());
+public final class S3ClientFactory {
 
-		if (s3Config.getEndpoint() != null) {
-			clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
-		}
+    public static S3Client getS3Client(final S3Config s3Config) {
+        S3ClientBuilder clientBuilder = S3Client
+            .builder()
+            // Use the httpClientBuilder to delegate the lifecycle management of the HTTP client to the AWS SDK
+            .httpClientBuilder(serviceDefaults -> ApacheHttpClient.builder().build());
 
-		if (s3Config.getRegion() != null) {
-			clientBuilder.region(Region.of(s3Config.getRegion()));
-		}
+        if (s3Config.endpoint() != null) {
+            clientBuilder.endpointOverride(URI.create(s3Config.endpoint()));
+        }
 
-		return clientBuilder
+        if (s3Config.region() != null) {
+            clientBuilder.region(Region.of(s3Config.region()));
+        }
+
+        return clientBuilder
             .credentialsProvider(getCredentials(s3Config))
             .build();
-	}
+    }
 
-	public static S3AsyncClient getAsyncS3Client(S3Config s3Config) {
+    public static S3AsyncClient getAsyncS3Client(final S3Config s3Config) {
         S3CrtAsyncClientBuilder clientBuilder = S3AsyncClient.crtBuilder();
 
-        if (s3Config.getEndpoint() != null) {
-            clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
+        if (s3Config.endpoint() != null) {
+            clientBuilder.endpointOverride(URI.create(s3Config.endpoint()));
         }
 
-        if (s3Config.getRegion() != null) {
-            clientBuilder.region(Region.of(s3Config.getRegion()));
+        if (s3Config.region() != null) {
+            clientBuilder.region(Region.of(s3Config.region()));
         }
 
-		return clientBuilder
+        return clientBuilder
             .credentialsProvider(getCredentials(s3Config))
             .build();
-	}
+    }
 
-	private static AwsCredentialsProvider getCredentials(S3Config s3Config) {
-		if (s3Config.getAccessKey() != null && s3Config.getSecretKey() != null) {
-			AwsCredentials credentials = AwsBasicCredentials.create(s3Config.getAccessKey(), s3Config.getSecretKey());
-			return StaticCredentialsProvider.create(credentials);
-		}
+    /**
+     * Factory method for constructing a new {@link AwsCredentialsProvider} for the given config. If no specific
+     * credential provider can be resolved from the given config, then a new {@link DefaultCredentialsProvider} is returned.
+     *
+     * @param config The S3Config.
+     * @return a new {@link AwsCredentialsProvider}.
+     */
+    private static AwsCredentialsProvider getCredentials(final S3Config config) {
+        // StsAssumeRoleCredentialsProvider
+        if (StringUtils.isNotEmpty(config.stsRoleArn())) {
+            return stsAssumeRoleCredentialsProvider(config);
+        }
 
-		return DefaultCredentialsProvider.create();
-	}
+        // StaticCredentialsProvider
+        if (StringUtils.isNotEmpty(config.accessKey()) &&
+            StringUtils.isNotEmpty(config.secretKey())) {
+            return staticCredentialsProvider(config);
+        }
+
+        // Otherwise, use DefaultCredentialsProvider
+        return DefaultCredentialsProvider.builder().build();
+    }
+
+    /**
+     * Factory method for constructing a new {@link StaticCredentialsProvider} for the given config.
+     *
+     * @param config The S3Config.
+     * @return a new {@link StaticCredentialsProvider}.
+     */
+    private static StaticCredentialsProvider staticCredentialsProvider(final S3Config config) {
+        final AwsCredentials credentials = AwsBasicCredentials.create(
+            config.accessKey(),
+            config.secretKey()
+        );
+        return StaticCredentialsProvider.create(credentials);
+    }
+
+    /**
+     * Factory method for constructing a new {@link StsAssumeRoleCredentialsProvider} for the given config.
+     *
+     * @param config The S3Config.
+     * @return a new {@link StsAssumeRoleCredentialsProvider}.
+     */
+    private static StsAssumeRoleCredentialsProvider stsAssumeRoleCredentialsProvider(final S3Config config) {
+        String roleSessionName = config.stsRoleSessionName();
+        roleSessionName = roleSessionName != null ? roleSessionName : "kestra-storage-s3-" + System.currentTimeMillis();
+
+        final AssumeRoleRequest assumeRoleRequest = AssumeRoleRequest.builder()
+            .roleArn(config.stsRoleArn())
+            .roleSessionName(roleSessionName)
+            .durationSeconds((int) config.stsRoleSessionDuration().toSeconds())
+            .externalId(config.stsRoleExternalId())
+            .build();
+
+        return StsAssumeRoleCredentialsProvider.builder()
+            .stsClient(stsClient(config))
+            .refreshRequest(assumeRoleRequest)
+            .build();
+    }
+
+    /**
+     * Factory method for constructing a new {@link StsClient} for the given config.
+     *
+     * @param config The S3Config.
+     * @return a new {@link StsClient}.
+     */
+    private static StsClient stsClient(final S3Config config) {
+        StsClientBuilder builder = StsClient.builder();
+
+        final String stsEndpointOverride = config.stsEndpointOverride();
+        if (stsEndpointOverride != null) {
+            builder.applyMutation(stsClientBuilder ->
+                stsClientBuilder.endpointOverride(URI.create(stsEndpointOverride))
+            );
+        }
+
+        final String regionString = config.region();
+        if (regionString != null) {
+            builder.applyMutation(stsClientBuilder ->
+                stsClientBuilder.region(Region.of(regionString))
+            );
+        }
+        return builder.build();
+    }
 }

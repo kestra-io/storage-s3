@@ -37,13 +37,13 @@ import static io.kestra.core.utils.Rethrow.throwFunction;
 @Introspected
 @S3StorageEnabled
 public class S3Storage implements StorageInterface {
-    S3Client s3Client;
+    private final S3Client s3Client;
 
-    S3AsyncClient s3AsyncClient;
+    private final S3AsyncClient s3AsyncClient;
 
     private final S3Config s3Config;
 
-    public S3Storage(S3Config s3Config) {
+    public S3Storage(final S3Config s3Config) {
         this.s3Config = s3Config;
         this.s3Client = S3ClientFactory.getS3Client(s3Config);
         this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(s3Config);
@@ -51,9 +51,9 @@ public class S3Storage implements StorageInterface {
 
     public String createBucket() throws IOException {
         try {
-            CreateBucketRequest request = CreateBucketRequest.builder().bucket(s3Config.getBucket()).build();
+            CreateBucketRequest request = CreateBucketRequest.builder().bucket(s3Config.bucket()).build();
             s3Client.createBucket(request);
-            return s3Config.getBucket();
+            return s3Config.bucket();
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
@@ -76,7 +76,7 @@ public class S3Storage implements StorageInterface {
     private InputStream get(String path) throws IOException {
         try {
             GetObjectRequest request = GetObjectRequest.builder()
-                .bucket(s3Config.getBucket())
+                .bucket(s3Config.bucket())
                 .key(path)
                 .build();
             ResponseInputStream<GetObjectResponse> inputStream = s3Client.getObject(request);
@@ -117,7 +117,7 @@ public class S3Storage implements StorageInterface {
 
     private Stream<String> keysForPrefix(String prefix, boolean recursive, boolean includeDirectories) {
         ListObjectsV2Request request = ListObjectsV2Request.builder()
-            .bucket(s3Config.getBucket())
+            .bucket(s3Config.bucket())
             .prefix(prefix)
             .build();
         List<S3Object> contents = s3Client.listObjectsV2(request).contents();
@@ -150,7 +150,7 @@ public class S3Storage implements StorageInterface {
     private FileAttributes getFileAttributes(String path) throws IOException {
         try {
             HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
-                .bucket(s3Config.getBucket())
+                .bucket(s3Config.bucket())
                 .key(path)
                 .build();
             S3FileAttributes.S3FileAttributesBuilder builder = S3FileAttributes.builder()
@@ -177,7 +177,7 @@ public class S3Storage implements StorageInterface {
             String path = getPath(tenantId, uri);
             mkdirs(path);
             PutObjectRequest request = PutObjectRequest.builder()
-                .bucket(s3Config.getBucket())
+                .bucket(s3Config.bucket())
                 .key(path)
                 .build();
 
@@ -220,7 +220,7 @@ public class S3Storage implements StorageInterface {
 
     private boolean deleteSingleObject(String path) {
         DeleteObjectRequest deleteRequest = DeleteObjectRequest.builder()
-            .bucket(s3Config.getBucket())
+            .bucket(s3Config.bucket())
             .key(path)
             .build();
 
@@ -235,7 +235,7 @@ public class S3Storage implements StorageInterface {
         }
         mkdirs(path);
         PutObjectRequest putRequest = PutObjectRequest.builder()
-            .bucket(s3Config.getBucket())
+            .bucket(s3Config.bucket())
             .key(path)
             .build();
         s3Client.putObject(putRequest, RequestBody.empty());
@@ -251,7 +251,7 @@ public class S3Storage implements StorageInterface {
             for (int i = 0; i <= directories.length - (path.endsWith("/") ? 1 : 2); i++) {
                 aggregatedPath.append(directories[i]).append("/");
                 PutObjectRequest putRequest = PutObjectRequest.builder()
-                    .bucket(s3Config.getBucket())
+                    .bucket(s3Config.bucket())
                     .key(aggregatedPath.toString())
                     .build();
                 s3Client.putObject(putRequest, RequestBody.empty());
@@ -269,7 +269,7 @@ public class S3Storage implements StorageInterface {
             FileAttributes attributes = getAttributes(tenantId, from);
             if (attributes.getType() == FileAttributes.FileType.Directory) {
                 ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
-                    .bucket(s3Config.getBucket())
+                    .bucket(s3Config.bucket())
                     .prefix(source)
                     .build();
 
@@ -295,9 +295,9 @@ public class S3Storage implements StorageInterface {
 
     private void move(String oldKey, String newKey) {
         CopyObjectRequest copyRequest = CopyObjectRequest.builder()
-            .sourceBucket(s3Config.getBucket())
+            .sourceBucket(s3Config.bucket())
             .sourceKey(oldKey)
-            .destinationBucket(s3Config.getBucket())
+            .destinationBucket(s3Config.bucket())
             .destinationKey(newKey)
             .build();
         s3Client.copyObject(copyRequest);
@@ -308,11 +308,12 @@ public class S3Storage implements StorageInterface {
     @Override
     public List<URI> deleteByPrefix(String tenantId, URI storagePrefix) throws IOException {
         ListObjectsRequest listRequest = ListObjectsRequest.builder()
-            .bucket(s3Config.getBucket())
+            .bucket(s3Config.bucket())
             .prefix(getPath(tenantId, storagePrefix))
             .build();
         ListObjectsResponse objectListing = s3Client.listObjects(listRequest);
 
+        @SuppressWarnings("unchecked")
         List<S3Object> s3Objects = objectListing.getValueForField("Contents", List.class).get();
 
         List<ObjectIdentifier> keys = s3Objects.stream()
@@ -322,7 +323,7 @@ public class S3Storage implements StorageInterface {
             .toList();
 
         DeleteObjectsRequest deleteRequest = DeleteObjectsRequest.builder()
-            .bucket(s3Config.getBucket())
+            .bucket(s3Config.bucket())
             .delete(builder -> builder.objects(keys))
             .build();
 
