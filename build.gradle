@@ -21,8 +21,8 @@ repositories {
     }
 }
 
-sourceCompatibility = 17
-targetCompatibility = 17
+sourceCompatibility = 21
+targetCompatibility = 21
 
 group "io.kestra.storage"
 description 'S3 storage plugin for Kestra'
@@ -47,6 +47,7 @@ dependencies {
     compileOnly "io.micronaut.validation:micronaut-validation"
 
     // kestra
+    annotationProcessor group: "io.kestra", name: "processor", version: kestraVersion
     compileOnly group: "io.kestra", name: "core", version: kestraVersion
 
     // AWS libs: versions are managed by the Micronaut BOM
@@ -104,6 +105,9 @@ dependencies {
     testImplementation "org.testcontainers:testcontainers:1.19.1"
     testImplementation "org.testcontainers:localstack:1.19.6"
     testImplementation "com.amazonaws:aws-java-sdk-s3"
+
+    // test
+    testAnnotationProcessor group: "io.kestra", name: "processor", version: kestraVersion
 }
 
 /**********************************************************************************************************************\
