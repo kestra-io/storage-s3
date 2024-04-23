@@ -1,8 +1,10 @@
 package io.kestra.storage.s3;
 
+import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
 import io.micronaut.core.annotation.Introspected;
+import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import org.apache.commons.lang3.StringUtils;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
@@ -36,6 +38,7 @@ import static io.kestra.core.utils.Rethrow.throwFunction;
 @Singleton
 @Introspected
 @S3StorageEnabled
+@Plugin
 public class S3Storage implements StorageInterface {
     private final S3Client s3Client;
 
@@ -43,6 +46,16 @@ public class S3Storage implements StorageInterface {
 
     private final S3Config s3Config;
 
+    /**
+     * No-arg constructor - required for Kestra plugin.
+     */
+    public S3Storage() {
+        this.s3Config = null;
+        this.s3AsyncClient = null;
+        this.s3Client = null;
+    }
+
+    @Inject
     public S3Storage(final S3Config s3Config) {
         this.s3Config = s3Config;
         this.s3Client = S3ClientFactory.getS3Client(s3Config);
