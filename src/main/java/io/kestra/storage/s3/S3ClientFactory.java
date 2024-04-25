@@ -6,7 +6,6 @@ import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.http.SdkHttpClient;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -28,12 +27,12 @@ public final class S3ClientFactory {
             // Use the httpClientBuilder to delegate the lifecycle management of the HTTP client to the AWS SDK
             .httpClientBuilder(serviceDefaults -> ApacheHttpClient.builder().build());
 
-        if (s3Config.endpoint() != null) {
-            clientBuilder.endpointOverride(URI.create(s3Config.endpoint()));
+        if (s3Config.getEndpoint() != null) {
+            clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
         }
 
-        if (s3Config.region() != null) {
-            clientBuilder.region(Region.of(s3Config.region()));
+        if (s3Config.getRegion() != null) {
+            clientBuilder.region(Region.of(s3Config.getRegion()));
         }
 
         return clientBuilder
@@ -44,12 +43,12 @@ public final class S3ClientFactory {
     public static S3AsyncClient getAsyncS3Client(final S3Config s3Config) {
         S3CrtAsyncClientBuilder clientBuilder = S3AsyncClient.crtBuilder();
 
-        if (s3Config.endpoint() != null) {
-            clientBuilder.endpointOverride(URI.create(s3Config.endpoint()));
+        if (s3Config.getEndpoint() != null) {
+            clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
         }
 
-        if (s3Config.region() != null) {
-            clientBuilder.region(Region.of(s3Config.region()));
+        if (s3Config.getRegion() != null) {
+            clientBuilder.region(Region.of(s3Config.getRegion()));
         }
 
         return clientBuilder
@@ -66,13 +65,13 @@ public final class S3ClientFactory {
      */
     private static AwsCredentialsProvider getCredentials(final S3Config config) {
         // StsAssumeRoleCredentialsProvider
-        if (StringUtils.isNotEmpty(config.stsRoleArn())) {
+        if (StringUtils.isNotEmpty(config.getStsRoleArn())) {
             return stsAssumeRoleCredentialsProvider(config);
         }
 
         // StaticCredentialsProvider
-        if (StringUtils.isNotEmpty(config.accessKey()) &&
-            StringUtils.isNotEmpty(config.secretKey())) {
+        if (StringUtils.isNotEmpty(config.getAccessKey()) &&
+            StringUtils.isNotEmpty(config.getSecretKey())) {
             return staticCredentialsProvider(config);
         }
 
@@ -88,8 +87,8 @@ public final class S3ClientFactory {
      */
     private static StaticCredentialsProvider staticCredentialsProvider(final S3Config config) {
         final AwsCredentials credentials = AwsBasicCredentials.create(
-            config.accessKey(),
-            config.secretKey()
+            config.getAccessKey(),
+            config.getSecretKey()
         );
         return StaticCredentialsProvider.create(credentials);
     }
@@ -101,14 +100,14 @@ public final class S3ClientFactory {
      * @return a new {@link StsAssumeRoleCredentialsProvider}.
      */
     private static StsAssumeRoleCredentialsProvider stsAssumeRoleCredentialsProvider(final S3Config config) {
-        String roleSessionName = config.stsRoleSessionName();
+        String roleSessionName = config.getStsRoleSessionName();
         roleSessionName = roleSessionName != null ? roleSessionName : "kestra-storage-s3-" + System.currentTimeMillis();
 
         final AssumeRoleRequest assumeRoleRequest = AssumeRoleRequest.builder()
-            .roleArn(config.stsRoleArn())
+            .roleArn(config.getStsRoleArn())
             .roleSessionName(roleSessionName)
-            .durationSeconds((int) config.stsRoleSessionDuration().toSeconds())
-            .externalId(config.stsRoleExternalId())
+            .durationSeconds((int) config.getStsRoleSessionDuration().toSeconds())
+            .externalId(config.getStsRoleExternalId())
             .build();
 
         return StsAssumeRoleCredentialsProvider.builder()
@@ -126,14 +125,14 @@ public final class S3ClientFactory {
     private static StsClient stsClient(final S3Config config) {
         StsClientBuilder builder = StsClient.builder();
 
-        final String stsEndpointOverride = config.stsEndpointOverride();
+        final String stsEndpointOverride = config.getStsEndpointOverride();
         if (stsEndpointOverride != null) {
             builder.applyMutation(stsClientBuilder ->
                 stsClientBuilder.endpointOverride(URI.create(stsEndpointOverride))
             );
         }
 
-        final String regionString = config.region();
+        final String regionString = config.getRegion();
         if (regionString != null) {
             builder.applyMutation(stsClientBuilder ->
                 stsClientBuilder.region(Region.of(regionString))

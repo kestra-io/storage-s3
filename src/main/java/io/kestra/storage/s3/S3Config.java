@@ -1,46 +1,73 @@
 package io.kestra.storage.s3;
 
-import io.micronaut.context.annotation.ConfigurationProperties;
-import io.micronaut.core.bind.annotation.Bindable;
-import jakarta.annotation.Nullable;
-import jakarta.inject.Singleton;
+import io.kestra.core.models.annotations.PluginProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Duration;
 
-/**
- * The AWS S3 configuration.
- *
- * @param bucket                 The S3 bucket name.
- * @param region                 The S3 region.
- * @param endpoint               The S3 endpoint.
- * @param accessKey              The AWS Access Key ID
- * @param secretKey              The AWS Secret Key.
- * @param stsRoleArn             The AWS STS Role.
- * @param stsRoleExternalId      The AWS STS External ID.
- * @param stsRoleSessionName     The AWS STS Session name.
- * @param stsRoleSessionDuration The AWS STS Session duration.
- * @param stsEndpointOverride    The AWS STS Endpoint.
- */
-@Singleton
-@S3StorageEnabled
-@ConfigurationProperties("kestra.storage.s3")
-public record S3Config(
-    String bucket,
+public interface S3Config {
 
-    String region,
+    Duration AWS_MIN_STS_ROLE_SESSION_DURATION = Duration.ofSeconds(900);
 
-    @Nullable String endpoint,
+    @Schema(
+        title = "The S3 bucket where to store internal objects."
+    )
+    @PluginProperty
+    String getBucket();
 
-    @Nullable String accessKey,
+    @Schema(
+        title = "AWS region with which the SDK should communicate."
+    )
+    @PluginProperty
+    String getRegion();
 
-    @Nullable String secretKey,
-    @Nullable String stsRoleArn,
-    @Nullable String stsRoleExternalId,
-    @Nullable String stsRoleSessionName,
-    @Nullable String stsEndpointOverride,
+    @PluginProperty
+    String getEndpoint();
 
-    @Bindable(defaultValue = "15m")
-    Duration stsRoleSessionDuration
-) {
+    @Schema(
+        title = "Access Key Id in order to connect to AWS.",
+        description = "If no connection is defined, we will use the `DefaultCredentialsProvider` to fetch the value."
+    )
+    @PluginProperty
+    String getAccessKey();
 
+    @Schema(
+        title = "Secret Key Id in order to connect to AWS.",
+        description = "If no connection is defined, we will use the `DefaultCredentialsProvider` to fetch the value."
+    )
+    @PluginProperty
+    String getSecretKey();
+
+    @Schema(
+        title = "AWS STS Role.",
+        description = "The Amazon Resource Name (ARN) of the role to assume. If set the task will use the `StsAssumeRoleCredentialsProvider`. Otherwise, the `StaticCredentialsProvider` will be used with the provided Access Key Id and Secret Key."
+    )
+    @PluginProperty
+    String getStsRoleArn();
+
+    @Schema(
+        title = "AWS STS External Id.",
+        description = " A unique identifier that might be required when you assume a role in another account. This property is only used when an `stsRoleArn` is defined."
+    )
+    @PluginProperty
+    String getStsRoleExternalId();
+
+    @Schema(
+        title = "AWS STS Session name. This property is only used when an `stsRoleArn` is defined."
+    )
+    @PluginProperty
+    String getStsRoleSessionName();
+
+    @Schema(
+        title = "The AWS STS endpoint with which the SDKClient should communicate."
+    )
+    @PluginProperty
+    String getStsEndpointOverride();
+
+    @Schema(
+        title = "AWS STS Session duration.",
+        description = "The duration of the role session (default: 15 minutes, i.e., PT15M). This property is only used when an `stsRoleArn` is defined."
+    )
+    @PluginProperty
+    java.time.Duration getStsRoleSessionDuration();
 }
