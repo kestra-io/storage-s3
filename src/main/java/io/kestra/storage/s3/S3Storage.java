@@ -14,31 +14,14 @@ import org.apache.commons.lang3.StringUtils;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
+import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
-import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
-import software.amazon.awssdk.services.s3.model.DeletedObject;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.ListObjectsRequest;
-import software.amazon.awssdk.services.s3.model.ListObjectsResponse;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
-import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectResponse;
-import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
-import software.amazon.awssdk.transfer.s3.model.Upload;
-import software.amazon.awssdk.transfer.s3.model.UploadRequest;
+import software.amazon.awssdk.transfer.s3.model.*;
 import software.amazon.awssdk.utils.builder.SdkBuilder;
 
 import java.io.FileNotFoundException;
@@ -94,13 +77,6 @@ public class S3Storage implements S3Config, StorageInterface {
      **/
     @Override
     public void init() {
-        try {
-            System.out.println("ThreadContextClassLoader: " + Thread.currentThread().getContextClassLoader());
-            Class<?> aClass = Class.forName("software.amazon.awssdk.crt.s3.S3MetaRequest");
-            System.out.println("ClassLoader for loaded class: " + aClass.getClassLoader());
-        } catch (ClassNotFoundException e) {
-            throw new RuntimeException(e);
-        }
         this.s3Client = S3ClientFactory.getS3Client(this);
         this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
     }
@@ -130,24 +106,33 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private InputStream get(String path) throws IOException {
-        try {
+        try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
             GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(this.getBucket())
                 .key(path)
                 .build();
-            ResponseInputStream<GetObjectResponse> inputStream = s3Client.getObject(request);
-            boolean isEmpty = inputStream.response().contentLength() == 0;
-            if (isEmpty) {
-                inputStream.close();
 
+            Download<ResponseInputStream<GetObjectResponse>> download = transferManager.download(
+                DownloadRequest.builder()
+                    .getObjectRequest(request)
+                    .responseTransformer(AsyncResponseTransformer.toBlockingInputStream())
+                    .build()
+            );
+            ResponseInputStream<GetObjectResponse> result = download.completionFuture().get().result();
+            boolean isEmpty = result.response().contentLength() == 0;
+            if (isEmpty) {
+                result.close();
                 return InputStream.nullInputStream();
             }
 
-            return inputStream;
-        } catch (NoSuchKeyException exception) {
-            throw new FileNotFoundException();
-        } catch (AwsServiceException exception) {
-            throw new IOException(exception);
+            return result;
+        }catch (ExecutionException e) {
+            if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
+                throw new FileNotFoundException();
+            }
+            throw new IOException(e);
+        } catch (InterruptedException e) {
+            throw new IOException(e);
         }
     }
 
@@ -228,8 +213,6 @@ public class S3Storage implements S3Config, StorageInterface {
     @Override
     public URI put(String tenantId, URI uri, InputStream data) throws IOException {
         try {
-            int length = data.available();
-
             String path = getPath(tenantId, uri);
             mkdirs(path);
             PutObjectRequest request = PutObjectRequest.builder()
@@ -243,14 +226,16 @@ public class S3Storage implements S3Config, StorageInterface {
                     .putObjectRequest(request)
                     .requestBody(AsyncRequestBody.fromInputStream(
                         data,
-                        (long) length,
+                        // If available bytes are equals to Integer.MAX_VALUE, then available bytes may be more than Integer.MAX_VALUE.
+                        // We set to null in this case, otherwise we would be limited to 2GB.
+                        data.available() == Integer.MAX_VALUE ? null : (long) data.available(),
                         Executors.newSingleThreadExecutor()
                     ));
 
                 upload = Optional.of(transferManager.upload(uploadRequest.build()));
             }
 
-            PutObjectResponse response = upload.orElseThrow(IOException::new).completionFuture().get().response();
+            upload.orElseThrow(IOException::new).completionFuture().get();
             return createUri(tenantId, uri.getPath());
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
