@@ -63,6 +63,8 @@ public class S3Storage implements S3Config, StorageInterface {
     private String stsRoleSessionName;
     private String stsEndpointOverride;
 
+    private boolean forcePathStyle;
+
     @Builder.Default
     private Duration stsRoleSessionDuration = AWS_MIN_STS_ROLE_SESSION_DURATION;
 
