@@ -36,6 +36,7 @@ public final class S3ClientFactory {
         }
 
         return clientBuilder
+            .forcePathStyle(s3Config.isForcePathStyle())
             .credentialsProvider(getCredentials(s3Config))
             .build();
     }
@@ -52,6 +53,7 @@ public final class S3ClientFactory {
         }
 
         return clientBuilder
+            .forcePathStyle(s3Config.isForcePathStyle())
             .credentialsProvider(getCredentials(s3Config))
             .build();
     }

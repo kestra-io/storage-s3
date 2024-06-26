@@ -70,4 +70,6 @@ public interface S3Config {
     )
     @PluginProperty
     java.time.Duration getStsRoleSessionDuration();
+
+    boolean isForcePathStyle();
 }
