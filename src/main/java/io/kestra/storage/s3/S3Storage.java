@@ -3,6 +3,7 @@ package io.kestra.storage.s3;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
+import io.kestra.core.storages.StorageObject;
 import jakarta.validation.constraints.NotEmpty;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -83,6 +84,11 @@ public class S3Storage implements S3Config, StorageInterface {
         this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
     }
 
+    @Override
+    public InputStream get(String tenantId, URI uri) throws IOException {
+        return this.getWithMetadata(tenantId, uri).inputStream();
+    }
+
     public String createBucket() throws IOException {
         try {
             CreateBucketRequest request = CreateBucketRequest.builder().bucket(this.getBucket()).build();
@@ -94,20 +100,8 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public InputStream get(String tenantId, URI uri) throws IOException {
+    public StorageObject getWithMetadata(String tenantId, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
-        return get(path);
-    }
-
-    @Override
-    public List<URI> allByPrefix(String tenantId, URI prefix, boolean includeDirectories) {
-        String path = getPath(tenantId, prefix);
-        return keysForPrefix(path, true, includeDirectories)
-            .map(key -> URI.create("kestra://" + prefix.getPath() + key.substring(path.length())))
-            .toList();
-    }
-
-    private InputStream get(String path) throws IOException {
         try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
             GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(this.getBucket())
@@ -121,13 +115,15 @@ public class S3Storage implements S3Config, StorageInterface {
                     .build()
             );
             ResponseInputStream<GetObjectResponse> result = download.completionFuture().get().result();
+            InputStream resultInputStream = result;
+
             boolean isEmpty = result.response().contentLength() == 0;
             if (isEmpty) {
                 result.close();
-                return InputStream.nullInputStream();
+                resultInputStream = InputStream.nullInputStream();
             }
 
-            return result;
+            return new StorageObject(result.response().metadata(), resultInputStream);
         }catch (ExecutionException e) {
             if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
                 throw new FileNotFoundException();
@@ -136,6 +132,14 @@ public class S3Storage implements S3Config, StorageInterface {
         } catch (InterruptedException e) {
             throw new IOException(e);
         }
+    }
+
+    @Override
+    public List<URI> allByPrefix(String tenantId, URI prefix, boolean includeDirectories) {
+        String path = getPath(tenantId, prefix);
+        return keysForPrefix(path, true, includeDirectories)
+            .map(key -> URI.create("kestra://" + prefix.getPath() + key.substring(path.length())))
+            .toList();
     }
 
     @Override
@@ -213,17 +217,21 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public URI put(String tenantId, URI uri, InputStream data) throws IOException {
+    public URI put(String tenantId, URI uri, StorageObject storageObject) throws IOException {
         try {
             String path = getPath(tenantId, uri);
             mkdirs(path);
             PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(this.getBucket())
                 .key(path)
+                .metadata(storageObject.metadata())
                 .build();
 
             Optional<Upload> upload;
-            try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
+            try (
+                InputStream data = storageObject.inputStream();
+                S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()
+            ) {
                 UploadRequest.Builder uploadRequest = UploadRequest.builder()
                     .putObjectRequest(request)
                     .requestBody(AsyncRequestBody.fromInputStream(

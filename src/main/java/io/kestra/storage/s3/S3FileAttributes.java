@@ -5,6 +5,9 @@ import lombok.Builder;
 import lombok.Value;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
+import java.io.IOException;
+import java.util.Map;
+
 @Value
 @Builder
 public class S3FileAttributes implements FileAttributes {
@@ -42,5 +45,10 @@ public class S3FileAttributes implements FileAttributes {
     @Override
     public long getSize() {
         return head.contentLength();
+    }
+
+    @Override
+    public Map<String, String> getMetadata() {
+        return head.metadata();
     }
 }
