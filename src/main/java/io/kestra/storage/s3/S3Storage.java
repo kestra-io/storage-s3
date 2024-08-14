@@ -20,9 +20,29 @@ import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
+import software.amazon.awssdk.services.s3.model.DeletedObject;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
-import software.amazon.awssdk.transfer.s3.model.*;
+import software.amazon.awssdk.transfer.s3.model.Download;
+import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
+import software.amazon.awssdk.transfer.s3.model.Upload;
+import software.amazon.awssdk.transfer.s3.model.UploadRequest;
 import software.amazon.awssdk.utils.builder.SdkBuilder;
 
 import java.io.FileNotFoundException;
@@ -218,7 +238,11 @@ public class S3Storage implements S3Config, StorageInterface {
 
     @Override
     public URI put(String tenantId, URI uri, StorageObject storageObject) throws IOException {
-        try {
+        try (
+            InputStream data = storageObject.inputStream();
+            S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()
+        ) {
+
             String path = getPath(tenantId, uri);
             mkdirs(path);
             PutObjectRequest request = PutObjectRequest.builder()
@@ -228,24 +252,20 @@ public class S3Storage implements S3Config, StorageInterface {
                 .build();
 
             Optional<Upload> upload;
-            try (
-                InputStream data = storageObject.inputStream();
-                S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()
-            ) {
-                UploadRequest.Builder uploadRequest = UploadRequest.builder()
-                    .putObjectRequest(request)
-                    .requestBody(AsyncRequestBody.fromInputStream(
-                        data,
-                        // If available bytes are equals to Integer.MAX_VALUE, then available bytes may be more than Integer.MAX_VALUE.
-                        // We set to null in this case, otherwise we would be limited to 2GB.
-                        data.available() == Integer.MAX_VALUE ? null : (long) data.available(),
-                        Executors.newSingleThreadExecutor()
-                    ));
 
-                upload = Optional.of(transferManager.upload(uploadRequest.build()));
-            }
+            UploadRequest.Builder uploadRequest = UploadRequest.builder()
+                .putObjectRequest(request)
+                .requestBody(AsyncRequestBody.fromInputStream(
+                    data,
+                    // If available bytes are equals to Integer.MAX_VALUE, then available bytes may be more than Integer.MAX_VALUE.
+                    // We set to null in this case, otherwise we would be limited to 2GB.
+                    data.available() == Integer.MAX_VALUE ? null : (long) data.available(),
+                    Executors.newSingleThreadExecutor()
+                ));
 
+            upload = Optional.of(transferManager.upload(uploadRequest.build()));
             upload.orElseThrow(IOException::new).completionFuture().get();
+
             return createUri(tenantId, uri.getPath());
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
