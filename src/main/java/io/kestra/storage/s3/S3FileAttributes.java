@@ -5,7 +5,6 @@ import lombok.Builder;
 import lombok.Value;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
-import java.io.IOException;
 import java.util.Map;
 
 @Value
@@ -18,7 +17,7 @@ public class S3FileAttributes implements FileAttributes {
 
     @Override
     public long getLastModifiedTime() {
-        return head.lastModified().getEpochSecond();
+        return head.lastModified().toEpochMilli();
     }
 
     /**
@@ -31,7 +30,7 @@ public class S3FileAttributes implements FileAttributes {
      */
     @Override
     public long getCreationTime() {
-        return head.lastModified().getEpochSecond();
+        return head.lastModified().toEpochMilli();
     }
 
     @Override
