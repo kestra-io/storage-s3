@@ -50,7 +50,7 @@ dependencies {
     // AWS libs: versions are managed by the Micronaut BOM from the Kestra Platform
     api 'software.amazon.awssdk:s3'
     api 'software.amazon.awssdk:s3-transfer-manager'
-    api 'software.amazon.awssdk.crt:aws-crt:0.30.11'
+    api 'software.amazon.awssdk.crt:aws-crt:0.31.1'
     api 'software.amazon.awssdk:apache-client'
     api 'software.amazon.awssdk:sts'
 }
