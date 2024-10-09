@@ -244,7 +244,6 @@ public class S3Storage implements S3Config, StorageInterface {
         ) {
 
             String path = getPath(tenantId, uri);
-            mkdirs(path);
             PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(this.getBucket())
                 .key(path)
