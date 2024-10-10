@@ -98,8 +98,8 @@ dependencies {
     testImplementation "org.hamcrest:hamcrest-library"
 
     // containers
-    testImplementation "org.testcontainers:junit-jupiter:1.20.1"
-    testImplementation "org.testcontainers:testcontainers:1.20.1"
+    testImplementation "org.testcontainers:junit-jupiter:1.20.2"
+    testImplementation "org.testcontainers:testcontainers:1.20.2"
     testImplementation "org.testcontainers:localstack:1.20.2"
     testImplementation "com.amazonaws:aws-java-sdk-s3"
 
