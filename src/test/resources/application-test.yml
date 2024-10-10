@@ -5,5 +5,5 @@ kestra:
       bucket: "kestra-unit-test"
       accessKey: "accesskey"
       secretKey: "secretkey"
-      region: "eu-west-3"
+      region: "us-east-1"
       endpoint: "http://127.0.0.1:4566"
