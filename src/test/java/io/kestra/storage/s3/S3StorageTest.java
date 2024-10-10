@@ -4,10 +4,7 @@ import io.kestra.core.storage.StorageTestSuite;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.utils.IdUtils;
 import jakarta.inject.Inject;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.core.ResponseInputStream;
@@ -18,22 +15,31 @@ import java.net.URI;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class S3StorageTest extends StorageTestSuite {
-    @Inject
     StorageInterface storageInterface;
 
     private static LocalStackContainer localstack;
 
     @BeforeAll
-    static void startLocalstack() {
-        localstack = new LocalStackContainer(DockerImageName.parse("localstack/localstack:1.4.0"));
+    void startLocalstack() throws IOException {
+        localstack = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8.1"));
         // some tests use a real flow with hardcoded configuration, so we have to fix the binding port
         localstack.setPortBindings(java.util.List.of("4566:4566"));
         localstack.start();
+
+        storageInterface = S3Storage.builder()
+            .accessKey(localstack.getAccessKey())
+            .secretKey(localstack.getSecretKey())
+            .bucket("kestra-unit-test")
+            .region(localstack.getRegion())
+            .endpoint(localstack.getEndpoint().toString())
+            .build();
+        storageInterface.init();
     }
 
     @AfterAll
-    static void stopLocalstack() {
+    void stopLocalstack() {
         if (localstack != null) {
             localstack.stop();
         }

@@ -1,5 +1,6 @@
 package io.kestra.storage.s3;
 
+import com.google.common.annotations.VisibleForTesting;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
@@ -20,24 +21,7 @@ import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
-import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
-import software.amazon.awssdk.services.s3.model.DeletedObject;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.ListObjectsRequest;
-import software.amazon.awssdk.services.s3.model.ListObjectsResponse;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
-import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.S3Exception;
-import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.Download;
 import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
@@ -105,15 +89,34 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
+    public boolean exists(String tenantId, URI uri) {
+        String path = getPath(tenantId, uri);
+        return exists(path);
+    }
+
+    private boolean exists(String path) {
+        try {
+            HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
+                .bucket(this.getBucket())
+                .key(path)
+                .build();
+            s3Client.headObject(headObjectRequest);
+            return true;
+        } catch (NoSuchKeyException e) {
+            return false;
+        }
+    }
+
+    @Override
     public InputStream get(String tenantId, URI uri) throws IOException {
         return this.getWithMetadata(tenantId, uri).inputStream();
     }
 
-    public String createBucket() throws IOException {
+    @VisibleForTesting
+    void createBucket() throws IOException {
         try {
             CreateBucketRequest request = CreateBucketRequest.builder().bucket(this.getBucket()).build();
             s3Client.createBucket(request);
-            return this.getBucket();
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
@@ -242,7 +245,6 @@ public class S3Storage implements S3Config, StorageInterface {
             InputStream data = storageObject.inputStream();
             S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()
         ) {
-
             String path = getPath(tenantId, uri);
             mkdirs(path);
             PutObjectRequest request = PutObjectRequest.builder()
@@ -314,13 +316,21 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private void mkdirs(String path) throws IOException {
-        path = path.replaceAll("^/*", "");
+        if (!path.endsWith("/")) {
+            path = path.substring(0, path.lastIndexOf("/") + 1);
+        }
+
+        // check if it exists before creating it
+        if (exists(path)) {
+            return;
+        }
+
         String[] directories = path.split("/");
-        StringBuilder aggregatedPath = new StringBuilder("/");
+        StringBuilder aggregatedPath = new StringBuilder();
         try {
             // perform 1 put request per parent directory in the path
-            for (int i = 0; i <= directories.length - (path.endsWith("/") ? 1 : 2); i++) {
-                aggregatedPath.append(directories[i]).append("/");
+            for (String directory : directories) {
+                aggregatedPath.append(directory).append("/");
                 PutObjectRequest putRequest = PutObjectRequest.builder()
                     .bucket(this.getBucket())
                     .key(aggregatedPath.toString())
