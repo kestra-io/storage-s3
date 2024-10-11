@@ -255,13 +255,21 @@ public class S3Storage implements S3Config, StorageInterface {
 
             Optional<Upload> upload;
 
+            Long length = (long) data.available();
+            if (data instanceof ResponseInputStream<?> responseInputStream && responseInputStream.response() instanceof GetObjectResponse getObjectResponse) {
+                length = getObjectResponse.contentLength();
+            }
+            if (length == Integer.MAX_VALUE) {
+                length = null;
+            }
+
             UploadRequest.Builder uploadRequest = UploadRequest.builder()
                 .putObjectRequest(request)
                 .requestBody(AsyncRequestBody.fromInputStream(
                     data,
                     // If available bytes are equals to Integer.MAX_VALUE, then available bytes may be more than Integer.MAX_VALUE.
                     // We set to null in this case, otherwise we would be limited to 2GB.
-                    data.available() == Integer.MAX_VALUE ? null : (long) data.available(),
+                    length,
                     Executors.newSingleThreadExecutor()
                 ));
 
