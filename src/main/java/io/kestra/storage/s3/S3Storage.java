@@ -35,12 +35,10 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static io.kestra.core.utils.Rethrow.throwFunction;
@@ -53,6 +51,8 @@ import static io.kestra.core.utils.Rethrow.throwFunction;
 @Plugin
 @Plugin.Id("s3")
 public class S3Storage implements S3Config, StorageInterface {
+    private static final Pattern METADATA_KEY_WORD_SEPARATOR = Pattern.compile("_([a-z])");
+    private static final Pattern UPPERCASE = Pattern.compile("([A-Z])");
 
     @NotEmpty
     private String bucket;
@@ -146,7 +146,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 resultInputStream = InputStream.nullInputStream();
             }
 
-            return new StorageObject(result.response().metadata(), resultInputStream);
+            return new StorageObject(toRetrievedMetadata(result.response().metadata()), resultInputStream);
         }catch (ExecutionException e) {
             if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
                 throw new FileNotFoundException();
@@ -250,7 +250,7 @@ public class S3Storage implements S3Config, StorageInterface {
             PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(this.getBucket())
                 .key(path)
-                .metadata(storageObject.metadata())
+                .metadata(toStoredMetadata(storageObject.metadata()))
                 .build();
 
             Optional<Upload> upload;
@@ -459,5 +459,25 @@ public class S3Storage implements S3Config, StorageInterface {
 
     private static URI createUri(String tenantId, String key) {
         return URI.create("kestra://%s".formatted(key).replace(tenantId + "/", ""));
+    }
+
+    private Map<String, String> toStoredMetadata(Map<String, String> metadata) {
+        if (metadata == null) {
+            return null;
+        }
+        return metadata.entrySet().stream()
+            .map(entry -> Map.entry(UPPERCASE.matcher(entry.getKey()).replaceAll("_$1").toLowerCase(), entry.getValue()))
+            .collect(HashMap::new, (m, v) -> m.put(v.getKey(), v.getValue()), HashMap::putAll);
+    }
+    private Map<String, String> toRetrievedMetadata(Map<String, String> metadata) {
+        if (metadata == null) {
+            return null;
+        }
+        return metadata.entrySet().stream()
+            .map(entry -> Map.entry(
+                METADATA_KEY_WORD_SEPARATOR.matcher(entry.getKey())
+                    .replaceAll(matchResult -> matchResult.group(1).toUpperCase()),
+                entry.getValue()
+            )).collect(HashMap::new, (m, v) -> m.put(v.getKey(), v.getValue()), HashMap::putAll);
     }
 }
