@@ -61,9 +61,9 @@ class S3StorageTest extends StorageTestSuite {
     void getEmptyFile() throws IOException {
         String prefix = IdUtils.create();
         URI uri = URI.create("/" + prefix + "/empty.txt");
-        storageInterface.put(null, uri, new ByteArrayInputStream(new byte[0]));
+        storageInterface.put(null, null, uri, new ByteArrayInputStream(new byte[0]));
 
-        InputStream inputStream = storageInterface.get(null, uri);
+        InputStream inputStream = storageInterface.get(null, null, uri);
         assertThat(inputStream, not(instanceOf(ResponseInputStream.class)));
         assertThat(new BufferedReader(new InputStreamReader(inputStream)).lines().count(), is(0L));
     }

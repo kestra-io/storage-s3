@@ -29,6 +29,7 @@ import software.amazon.awssdk.transfer.s3.model.Upload;
 import software.amazon.awssdk.transfer.s3.model.UploadRequest;
 import software.amazon.awssdk.utils.builder.SdkBuilder;
 
+import javax.annotation.Nullable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -89,7 +90,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public boolean exists(String tenantId, URI uri) {
+    public boolean exists(String tenantId, @Nullable String namespace, URI uri) {
         String path = getPath(tenantId, uri);
         return exists(path);
     }
@@ -108,8 +109,8 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public InputStream get(String tenantId, URI uri) throws IOException {
-        return this.getWithMetadata(tenantId, uri).inputStream();
+    public InputStream get(String tenantId, @Nullable String namespace, URI uri) throws IOException {
+        return this.getWithMetadata(tenantId, namespace, uri).inputStream();
     }
 
     @VisibleForTesting
@@ -123,7 +124,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public StorageObject getWithMetadata(String tenantId, URI uri) throws IOException {
+    public StorageObject getWithMetadata(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
         try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
             GetObjectRequest request = GetObjectRequest.builder()
@@ -158,7 +159,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public List<URI> allByPrefix(String tenantId, URI prefix, boolean includeDirectories) {
+    public List<URI> allByPrefix(String tenantId, @Nullable String namespace, URI prefix, boolean includeDirectories) {
         String path = getPath(tenantId, prefix);
         return keysForPrefix(path, true, includeDirectories)
             .map(key -> URI.create("kestra://" + prefix.getPath() + key.substring(path.length())))
@@ -166,7 +167,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public List<FileAttributes> list(String tenantId, URI uri) throws IOException {
+    public List<FileAttributes> list(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
         String prefix = path.endsWith("/") ? path : path + "/";
         try {
@@ -175,7 +176,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 .toList();
             if (list.isEmpty()) {
                 // this will throw FileNotFound if there is no directory
-                this.getAttributes(tenantId, uri);
+                this.getAttributes(tenantId, namespace, uri);
             }
             return list;
         } catch (NoSuchKeyException exception) {
@@ -205,7 +206,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public FileAttributes getAttributes(String tenantId, URI uri) throws IOException {
+    public FileAttributes getAttributes(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
         try {
             return getFileAttributes(path);
@@ -240,7 +241,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public URI put(String tenantId, URI uri, StorageObject storageObject) throws IOException {
+    public URI put(String tenantId, @Nullable String namespace, URI uri, StorageObject storageObject) throws IOException {
         try (
             InputStream data = storageObject.inputStream();
             S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()
@@ -285,15 +286,15 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public boolean delete(String tenantId, URI uri) throws IOException {
+    public boolean delete(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         FileAttributes fileAttributes;
         try {
-            fileAttributes = getAttributes(tenantId, uri);
+            fileAttributes = getAttributes(tenantId, namespace, uri);
         } catch (FileNotFoundException e) {
             return false;
         }
         if (fileAttributes.getType() == FileAttributes.FileType.Directory) {
-            deleteByPrefix(tenantId, uri.getPath().endsWith("/") ? uri : URI.create(uri + "/"));
+            deleteByPrefix(tenantId, namespace, uri.getPath().endsWith("/") ? uri : URI.create(uri + "/"));
         }
 
         return deleteSingleObject(getPath(tenantId, uri));
@@ -309,7 +310,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public URI createDirectory(String tenantId, URI uri) throws IOException {
+    public URI createDirectory(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
         if (!StringUtils.endsWith(path, "/")) {
             path += "/";
@@ -351,11 +352,11 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public URI move(String tenantId, URI from, URI to) throws IOException {
+    public URI move(String tenantId, @Nullable String namespace, URI from, URI to) throws IOException {
         String source = getPath(tenantId, from);
         String dest = getPath(tenantId, to);
         try {
-            FileAttributes attributes = getAttributes(tenantId, from);
+            FileAttributes attributes = getAttributes(tenantId, namespace, from);
             if (attributes.getType() == FileAttributes.FileType.Directory) {
                 ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
                     .bucket(this.getBucket())
@@ -395,7 +396,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public List<URI> deleteByPrefix(String tenantId, URI storagePrefix) throws IOException {
+    public List<URI> deleteByPrefix(String tenantId, @Nullable String namespace, URI storagePrefix) throws IOException {
         ListObjectsRequest listRequest = ListObjectsRequest.builder()
             .bucket(this.getBucket())
             .prefix(getPath(tenantId, storagePrefix))
