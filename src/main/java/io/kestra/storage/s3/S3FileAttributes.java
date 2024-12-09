@@ -8,12 +8,20 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import java.util.Map;
 
 @Value
-@Builder
 public class S3FileAttributes implements FileAttributes {
-
     String fileName;
     HeadObjectResponse head;
     boolean isDirectory;
+    Map<String, String> metadata;
+
+    @Builder
+    public S3FileAttributes(String fileName, HeadObjectResponse head, boolean isDirectory) {
+        this.fileName = fileName;
+        this.head = head;
+        this.isDirectory = isDirectory;
+
+        this.metadata = MetadataUtils.toRetrievedMetadata(head.metadata());
+    }
 
     @Override
     public long getLastModifiedTime() {
@@ -48,6 +56,6 @@ public class S3FileAttributes implements FileAttributes {
 
     @Override
     public Map<String, String> getMetadata() {
-        return head.metadata();
+        return metadata;
     }
 }
