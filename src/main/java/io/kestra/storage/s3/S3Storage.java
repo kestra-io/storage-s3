@@ -147,7 +147,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 resultInputStream = InputStream.nullInputStream();
             }
 
-            return new StorageObject(toRetrievedMetadata(result.response().metadata()), resultInputStream);
+            return new StorageObject(MetadataUtils.toRetrievedMetadata(result.response().metadata()), resultInputStream);
         }catch (ExecutionException e) {
             if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
                 throw new FileNotFoundException();
@@ -251,7 +251,7 @@ public class S3Storage implements S3Config, StorageInterface {
             PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(this.getBucket())
                 .key(path)
-                .metadata(toStoredMetadata(storageObject.metadata()))
+                .metadata(MetadataUtils.toStoredMetadata(storageObject.metadata()))
                 .build();
 
             Optional<Upload> upload;
@@ -460,25 +460,5 @@ public class S3Storage implements S3Config, StorageInterface {
 
     private static URI createUri(String tenantId, String key) {
         return URI.create("kestra://%s".formatted(key).replace(tenantId + "/", ""));
-    }
-
-    private Map<String, String> toStoredMetadata(Map<String, String> metadata) {
-        if (metadata == null) {
-            return null;
-        }
-        return metadata.entrySet().stream()
-            .map(entry -> Map.entry(UPPERCASE.matcher(entry.getKey()).replaceAll("_$1").toLowerCase(), entry.getValue()))
-            .collect(HashMap::new, (m, v) -> m.put(v.getKey(), v.getValue()), HashMap::putAll);
-    }
-    private Map<String, String> toRetrievedMetadata(Map<String, String> metadata) {
-        if (metadata == null) {
-            return null;
-        }
-        return metadata.entrySet().stream()
-            .map(entry -> Map.entry(
-                METADATA_KEY_WORD_SEPARATOR.matcher(entry.getKey())
-                    .replaceAll(matchResult -> matchResult.group(1).toUpperCase()),
-                entry.getValue()
-            )).collect(HashMap::new, (m, v) -> m.put(v.getKey(), v.getValue()), HashMap::putAll);
     }
 }
