@@ -47,10 +47,11 @@ dependencies {
     annotationProcessor group: "io.kestra", name: "processor", version: kestraVersion
     compileOnly group: "io.kestra", name: "core", version: kestraVersion
 
-    // AWS libs: versions are managed by the Micronaut BOM from the Kestra Platform
+    // AWS libraries are managed by the the Kestra Platform so they are aligned on all plugins
+    api platform('software.amazon.awssdk:bom')
     api 'software.amazon.awssdk:s3'
     api 'software.amazon.awssdk:s3-transfer-manager'
-    api 'software.amazon.awssdk.crt:aws-crt:0.33.1'
+    api 'software.amazon.awssdk.crt:aws-crt'
     api 'software.amazon.awssdk:apache-client'
     api 'software.amazon.awssdk:sts'
 }
