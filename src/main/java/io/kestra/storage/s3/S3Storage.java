@@ -451,13 +451,6 @@ public class S3Storage implements S3Config, StorageInterface {
         return "/" + tenantId + path;
     }
 
-    // Traversal does not work with s3 but it just return empty objects so throwing is more explicit
-    private void parentTraversalGuard(URI uri) {
-        if (uri.toString().contains("..")) {
-            throw new IllegalArgumentException("File should be accessed with their full path and not using relative '..' path.");
-        }
-    }
-
     private static URI createUri(String tenantId, String key) {
         return URI.create("kestra://%s".formatted(key).replace(tenantId + "/", ""));
     }
