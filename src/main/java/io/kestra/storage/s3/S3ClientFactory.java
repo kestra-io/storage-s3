@@ -18,44 +18,52 @@ import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider
 import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 
 import java.net.URI;
+import java.util.HashMap;
+import java.util.Map;
 
 public final class S3ClientFactory {
+    private static final Map<S3Config, S3Client> cachedS3Clients = new HashMap<>();
+    private static final Map<S3Config, S3AsyncClient> cachedS3AsyncClients = new HashMap<>();
 
     public static S3Client getS3Client(final S3Config s3Config) {
-        S3ClientBuilder clientBuilder = S3Client
-            .builder()
-            // Use the httpClientBuilder to delegate the lifecycle management of the HTTP client to the AWS SDK
-            .httpClientBuilder(serviceDefaults -> ApacheHttpClient.builder().build());
+        return cachedS3Clients.computeIfAbsent(s3Config, (key) -> {
+            S3ClientBuilder clientBuilder = S3Client
+                .builder()
+                // Use the httpClientBuilder to delegate the lifecycle management of the HTTP client to the AWS SDK
+                .httpClientBuilder(serviceDefaults -> ApacheHttpClient.builder().build());
 
-        if (s3Config.getEndpoint() != null) {
-            clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
-        }
+            if (s3Config.getEndpoint() != null) {
+                clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
+            }
 
-        if (s3Config.getRegion() != null) {
-            clientBuilder.region(Region.of(s3Config.getRegion()));
-        }
+            if (s3Config.getRegion() != null) {
+                clientBuilder.region(Region.of(s3Config.getRegion()));
+            }
 
-        return clientBuilder
-            .forcePathStyle(s3Config.isForcePathStyle())
-            .credentialsProvider(getCredentials(s3Config))
-            .build();
+            return clientBuilder
+                .forcePathStyle(s3Config.isForcePathStyle())
+                .credentialsProvider(getCredentials(s3Config))
+                .build();
+        });
     }
 
     public static S3AsyncClient getAsyncS3Client(final S3Config s3Config) {
-        S3CrtAsyncClientBuilder clientBuilder = S3AsyncClient.crtBuilder();
+        return cachedS3AsyncClients.computeIfAbsent(s3Config, (key) -> {
+            S3CrtAsyncClientBuilder clientBuilder = S3AsyncClient.crtBuilder();
 
-        if (s3Config.getEndpoint() != null) {
-            clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
-        }
+            if (s3Config.getEndpoint() != null) {
+                clientBuilder.endpointOverride(URI.create(s3Config.getEndpoint()));
+            }
 
-        if (s3Config.getRegion() != null) {
-            clientBuilder.region(Region.of(s3Config.getRegion()));
-        }
+            if (s3Config.getRegion() != null) {
+                clientBuilder.region(Region.of(s3Config.getRegion()));
+            }
 
-        return clientBuilder
-            .forcePathStyle(s3Config.isForcePathStyle())
-            .credentialsProvider(getCredentials(s3Config))
-            .build();
+            return clientBuilder
+                .forcePathStyle(s3Config.isForcePathStyle())
+                .credentialsProvider(getCredentials(s3Config))
+                .build();
+        });
     }
 
     /**
