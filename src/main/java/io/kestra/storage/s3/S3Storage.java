@@ -13,6 +13,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.extern.jackson.Jacksonized;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
@@ -52,6 +54,7 @@ import static io.kestra.core.utils.Rethrow.throwFunction;
 @Plugin
 @Plugin.Id("s3")
 public class S3Storage implements S3Config, StorageInterface {
+    private static final Logger LOG = LoggerFactory.getLogger(S3Storage.class);
     private static final Pattern METADATA_KEY_WORD_SEPARATOR = Pattern.compile("_([a-z])");
     private static final Pattern UPPERCASE = Pattern.compile("([A-Z])");
 
@@ -453,5 +456,23 @@ public class S3Storage implements S3Config, StorageInterface {
 
     private static URI createUri(String tenantId, String key) {
         return URI.create("kestra://%s".formatted(key).replace(tenantId + "/", ""));
+    }
+
+    public void close() {
+        if (this.s3Client != null) {
+            try {
+                this.s3Client.close();
+            } catch (Exception e) {
+                LOG.warn("Failed to close GcsStorage", e);
+            }
+        }
+
+        if (this.s3AsyncClient != null) {
+            try {
+                this.s3AsyncClient.close();
+            } catch (Exception e) {
+                LOG.warn("Failed to close GcsStorage", e);
+            }
+        }
     }
 }
