@@ -463,7 +463,7 @@ public class S3Storage implements S3Config, StorageInterface {
             try {
                 this.s3Client.close();
             } catch (Exception e) {
-                LOG.warn("Failed to close GcsStorage", e);
+                LOG.warn("Failed to close S3Storage", e);
             }
         }
 
@@ -471,7 +471,7 @@ public class S3Storage implements S3Config, StorageInterface {
             try {
                 this.s3AsyncClient.close();
             } catch (Exception e) {
-                LOG.warn("Failed to close GcsStorage", e);
+                LOG.warn("Failed to close S3Storage", e);
             }
         }
     }
