@@ -32,6 +32,7 @@ import software.amazon.awssdk.transfer.s3.model.UploadRequest;
 import software.amazon.awssdk.utils.builder.SdkBuilder;
 
 import jakarta.annotation.Nullable;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -151,7 +152,7 @@ public class S3Storage implements S3Config, StorageInterface {
             }
 
             return new StorageObject(MetadataUtils.toRetrievedMetadata(result.response().metadata()), resultInputStream);
-        }catch (ExecutionException e) {
+        } catch (ExecutionException e) {
             if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
                 throw new FileNotFoundException();
             }
@@ -435,6 +436,11 @@ public class S3Storage implements S3Config, StorageInterface {
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(bucket, region, endpoint, accessKey, secretKey, stsRoleArn, stsRoleExternalId, stsRoleSessionName, stsEndpointOverride, forcePathStyle, stsRoleSessionDuration);
     }
 
     private String getPath(String tenantId, URI uri) {
