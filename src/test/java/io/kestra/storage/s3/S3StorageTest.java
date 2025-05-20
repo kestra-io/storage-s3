@@ -2,6 +2,7 @@ package io.kestra.storage.s3;
 
 import io.kestra.core.storage.StorageTestSuite;
 import io.kestra.core.storages.StorageInterface;
+import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.*;
@@ -61,9 +62,9 @@ class S3StorageTest extends StorageTestSuite {
     void getEmptyFile() throws IOException {
         String prefix = IdUtils.create();
         URI uri = URI.create("/" + prefix + "/empty.txt");
-        storageInterface.put(null, null, uri, new ByteArrayInputStream(new byte[0]));
+        storageInterface.put(TenantService.MAIN_TENANT, null, uri, new ByteArrayInputStream(new byte[0]));
 
-        InputStream inputStream = storageInterface.get(null, null, uri);
+        InputStream inputStream = storageInterface.get(TenantService.MAIN_TENANT, null, uri);
         assertThat(inputStream, not(instanceOf(ResponseInputStream.class)));
         assertThat(new BufferedReader(new InputStreamReader(inputStream)).lines().count(), is(0L));
     }
