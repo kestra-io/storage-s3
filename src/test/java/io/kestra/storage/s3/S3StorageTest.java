@@ -4,7 +4,6 @@ import io.kestra.core.storage.StorageTestSuite;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
-import jakarta.inject.Inject;
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -15,6 +14,7 @@ import java.net.URI;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
+import static org.testcontainers.containers.localstack.LocalStackContainer.Service.S3;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class S3StorageTest extends StorageTestSuite {
@@ -24,7 +24,8 @@ class S3StorageTest extends StorageTestSuite {
 
     @BeforeAll
     void startLocalstack() throws IOException {
-        localstack = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8.1"));
+        localstack = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8.1"))
+            .withServices(S3);
         // some tests use a real flow with hardcoded configuration, so we have to fix the binding port
         localstack.setPortBindings(java.util.List.of("4566:4566"));
         localstack.start();
