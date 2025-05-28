@@ -438,7 +438,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private static URI createUri(String tenantId, String key) {
-        return URI.create("kestra://%s".formatted(key).replace(tenantId + "/", ""));
+        return URI.create("kestra://%s".formatted(key).replace(tenantId, ""));
     }
 
     public void close() {
