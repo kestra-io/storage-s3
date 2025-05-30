@@ -437,25 +437,8 @@ public class S3Storage implements S3Config, StorageInterface {
         }
     }
 
-    private String getPath(String tenantId, URI uri) {
-        if (uri == null) {
-            uri = URI.create("/");
-        }
-
-        parentTraversalGuard(uri);
-        String path = uri.getPath();
-        if (!path.startsWith("/")) {
-            path = "/" + path;
-        }
-
-        if (tenantId == null) {
-            return path;
-        }
-        return "/" + tenantId + path;
-    }
-
     private static URI createUri(String tenantId, String key) {
-        return URI.create("kestra://%s".formatted(key).replace(tenantId + "/", ""));
+        return URI.create("kestra://%s".formatted(key).replace(tenantId, ""));
     }
 
     public void close() {
