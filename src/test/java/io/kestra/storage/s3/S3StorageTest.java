@@ -69,4 +69,21 @@ class S3StorageTest extends StorageTestSuite {
         assertThat(inputStream, not(instanceOf(ResponseInputStream.class)));
         assertThat(new BufferedReader(new InputStreamReader(inputStream)).lines().count(), is(0L));
     }
+
+    @Test
+    void shouldListMoreThan1000ObjectsWithPagination() throws IOException {
+        String prefix = IdUtils.create();
+        int fileCount = 1500;
+
+        for (int i = 0; i < fileCount; i++) {
+            URI uri = URI.create("/" + prefix + "/file-" + i + ".txt");
+            storageInterface.put(TenantService.MAIN_TENANT, null, uri, new ByteArrayInputStream(("file " + i).getBytes()));
+        }
+
+        URI folderUri = URI.create("/" + prefix + "/");
+        var uris = storageInterface.allByPrefix(TenantService.MAIN_TENANT, null, folderUri, false);
+
+        assertThat("Should list all files across paginated S3 responses", uris.size(), is(fileCount));
+        assertThat("All listed URIs should point to the right folder", uris, everyItem(hasToString(startsWith("kestra:///" + prefix + "/"))));
+    }
 }

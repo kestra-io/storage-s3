@@ -5,12 +5,9 @@ import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.storages.StorageObject;
+import jakarta.annotation.Nullable;
 import jakarta.validation.constraints.NotEmpty;
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import lombok.extern.jackson.Jacksonized;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -31,14 +28,16 @@ import software.amazon.awssdk.transfer.s3.model.Upload;
 import software.amazon.awssdk.transfer.s3.model.UploadRequest;
 import software.amazon.awssdk.utils.builder.SdkBuilder;
 
-import jakarta.annotation.Nullable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
@@ -151,7 +150,7 @@ public class S3Storage implements S3Config, StorageInterface {
             }
 
             return new StorageObject(MetadataUtils.toRetrievedMetadata(result.response().metadata()), resultInputStream);
-        }catch (ExecutionException e) {
+        } catch (ExecutionException e) {
             if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
                 throw new FileNotFoundException();
             }
@@ -190,22 +189,38 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private Stream<String> keysForPrefix(String prefix, boolean recursive, boolean includeDirectories) {
-        ListObjectsV2Request request = ListObjectsV2Request.builder()
-            .bucket(this.getBucket())
-            .prefix(prefix)
-            .build();
-        List<S3Object> contents = s3Client.listObjectsV2(request).contents();
-        return contents.stream()
-            .map(S3Object::key)
-            .filter(key -> {
-                key = key.substring(prefix.length());
-                // Remove recursive result and requested dir
-                return !key.isEmpty()
-                    && !Objects.equals(key, prefix)
-                    && !key.equals("/")
-                    && (recursive || Path.of(key).getParent() == null)
-                    && (includeDirectories || !key.endsWith("/"));
-            });
+        List<String> allKeys = new ArrayList<>();
+        String continuationToken = null;
+
+        do {
+            var requestBuilder = ListObjectsV2Request.builder()
+                .bucket(this.getBucket())
+                .prefix(prefix);
+
+            if (continuationToken != null) {
+                requestBuilder.continuationToken(continuationToken);
+            }
+
+            var response = s3Client.listObjectsV2(requestBuilder.build());
+            continuationToken = response.isTruncated() ? response.nextContinuationToken() : null;
+
+            List<S3Object> contents = response.contents();
+
+            contents.stream()
+                .map(S3Object::key)
+                .filter(key -> {
+                    String relativeKey = key.substring(prefix.length());
+                    return !relativeKey.isEmpty()
+                        && !Objects.equals(key, prefix)
+                        && !relativeKey.equals("/")
+                        && (recursive || Path.of(relativeKey).getParent() == null)
+                        && (includeDirectories || !relativeKey.endsWith("/"));
+                })
+                .forEach(allKeys::add);
+
+        } while (continuationToken != null);
+
+        return allKeys.stream();
     }
 
     @Override
