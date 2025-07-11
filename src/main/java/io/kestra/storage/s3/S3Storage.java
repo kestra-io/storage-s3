@@ -376,21 +376,29 @@ public class S3Storage implements S3Config, StorageInterface {
         try {
             FileAttributes attributes = getAttributes(tenantId, namespace, from);
             if (attributes.getType() == FileAttributes.FileType.Directory) {
-                ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
-                    .bucket(this.getBucket())
-                    .prefix(source)
-                    .build();
+                String continuationToken = null;
+                do {
+                    ListObjectsV2Request.Builder listRequestBuilder = ListObjectsV2Request.builder()
+                        .bucket(this.getBucket())
+                        .prefix(source);
+                    if (continuationToken != null) {
+                        listRequestBuilder.continuationToken(continuationToken);
+                    }
 
-                ListObjectsV2Response listResponse = s3Client.listObjectsV2(listRequest);
-                List<S3Object> objects = listResponse.contents();
-                if (objects.isEmpty()) {
-                    throw new FileNotFoundException(to + " (Not Found)");
-                }
+                    ListObjectsV2Response listResponse = s3Client.listObjectsV2(listRequestBuilder.build());
+                    continuationToken = listResponse.isTruncated() ? listResponse.nextContinuationToken() : null;
 
-                for (S3Object object : objects) {
-                    String newKey = dest + object.key().substring(source.length());
-                    move(object.key(), newKey);
-                }
+                    List<S3Object> objects = listResponse.contents();
+                    if (objects.isEmpty() && continuationToken == null) {
+                        throw new FileNotFoundException(to + " (Not Found)");
+                    }
+
+                    for (S3Object object : objects) {
+                        String newKey = dest + object.key().substring(source.length());
+                        move(object.key(), newKey);
+                    }
+
+                } while (continuationToken != null);
             } else {
                 move(source, dest);
             }

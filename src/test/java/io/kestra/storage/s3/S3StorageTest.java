@@ -86,4 +86,31 @@ class S3StorageTest extends StorageTestSuite {
         assertThat("Should list all files across paginated S3 responses", uris.size(), is(fileCount));
         assertThat("All listed URIs should point to the right folder", uris, everyItem(hasToString(startsWith("kestra:///" + prefix + "/"))));
     }
+
+    @Test
+    void shouldMoveMoreThan1000FilesWithPagination() throws IOException {
+        String sourcePrefix = IdUtils.create();
+        String targetPrefix = IdUtils.create();
+        int fileCount = 1200;
+
+        // Upload files under the source directory
+        for (int i = 0; i < fileCount; i++) {
+            URI uri = URI.create("/" + sourcePrefix + "/file-" + i + ".txt");
+            storageInterface.put(TenantService.MAIN_TENANT, null, uri, new ByteArrayInputStream(("data-" + i).getBytes()));
+        }
+
+        URI sourceUri = URI.create("/" + sourcePrefix + "/");
+        URI targetUri = URI.create("/" + targetPrefix + "/");
+
+        // Move the directory
+        storageInterface.move(TenantService.MAIN_TENANT, null, sourceUri, targetUri);
+
+        // Check that all files exist at the destination
+        var destinationUris = storageInterface.allByPrefix(TenantService.MAIN_TENANT, null, targetUri, false);
+        assertThat("All files should have been moved", destinationUris.size(), is(fileCount));
+
+        // Check that the original files no longer exist
+        var sourceFiles = storageInterface.allByPrefix(TenantService.MAIN_TENANT, null, sourceUri, false);
+        assertThat("Source directory should be empty after move", sourceFiles, is(empty()));
+    }
 }
