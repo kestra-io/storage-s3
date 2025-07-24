@@ -438,9 +438,10 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private static URI createUri(String tenantId, String key) {
-        return URI.create("kestra://%s".formatted(key).replace(tenantId, ""));
+        return URI.create(tenantId == null ? "kestra://%s".formatted(key) : "kestra://%s".formatted(key).replace(tenantId, ""));
     }
 
+    @Override
     public void close() {
         if (this.s3Client != null) {
             try {
