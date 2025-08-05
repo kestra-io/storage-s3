@@ -219,3 +219,38 @@ idea {
         downloadSources = true
     }
 }
+
+
+afterEvaluate {
+    publishing.publications.all { publication ->
+        if (publication.hasProperty('pom')) {
+            publication.pom.withXml { xml ->
+                def dependenciesNode = xml.asNode().get('dependencies')?.getAt(0) as groovy.util.Node
+                if (!dependenciesNode) return
+
+                // Resolve the compileClasspath to get actual versions
+                def resolvedDependencies = configurations.compileClasspath
+                    .resolvedConfiguration
+                    .firstLevelModuleDependencies
+
+                dependenciesNode.children().findAll { it instanceof groovy.util.Node }.each { depNode ->
+                    def groupId = depNode.get('groupId')?.text()
+                    def artifactId = depNode.get('artifactId')?.text()
+                    def versionNode = depNode.get('version')
+
+                    if (!versionNode || versionNode.text().trim() == '') {
+                        def resolved = resolvedDependencies.find {
+                            it.moduleGroup == groupId && it.moduleName == artifactId
+                        }
+
+                        if (resolved) {
+                            depNode.appendNode('version', resolved.moduleVersion)
+                        } else {
+                            logger.warn("Could not resolve version for ${groupId}:${artifactId}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
