@@ -8,6 +8,7 @@ plugins {
     id 'signing'
     id "com.github.ben-manes.versions" version "0.52.0"
     id 'net.researchgate.release' version '3.1.0'
+    id "io.kestra.gradle.inject-bom-versions" version "1.0.0"
 }
 
 def isBuildSnapshot = version.toString().endsWith("-SNAPSHOT")
@@ -217,73 +218,5 @@ idea {
     module {
         downloadJavadoc = true
         downloadSources = true
-    }
-}
-
-
-afterEvaluate {
-    publishing.publications.all { publication ->
-        if (publication.hasProperty('pom')) {
-            publication.pom.withXml { xml ->
-                def root = xml.asNode()
-
-                // Handle <dependencies>
-                def dependenciesNode = root.get('dependencies')?.getAt(0) as groovy.util.Node
-                if (dependenciesNode) {
-                    def resolvedDeps = configurations.compileClasspath
-                        .resolvedConfiguration
-                        .firstLevelModuleDependencies
-
-                    dependenciesNode.children().findAll { it instanceof groovy.util.Node }.each { depNode ->
-                        def groupId = depNode.get('groupId')?.text()
-                        def artifactId = depNode.get('artifactId')?.text()
-                        def versionNode = depNode.get('version')
-
-                        if (!versionNode || versionNode.text().trim() == '') {
-                            def resolved = resolvedDeps.find {
-                                it.moduleGroup == groupId && it.moduleName == artifactId
-                            }
-
-                            if (resolved) {
-                                depNode.appendNode('version', resolved.moduleVersion)
-                                logger.lifecycle("Injected dependency version: ${groupId}:${artifactId}:${resolved.moduleVersion}")
-                            } else {
-                                logger.warn("Could not resolve version for ${groupId}:${artifactId}")
-                            }
-                        }
-                    }
-                }
-
-                // Handle <dependencyManagement>
-                def depMgmt = root.get('dependencyManagement')?.getAt(0) as groovy.util.Node
-                def dmDeps = depMgmt?.get('dependencies')?.getAt(0) as groovy.util.Node
-
-                if (dmDeps) {
-                    // Search resolved components once
-                    def resolvedAll = configurations.compileClasspath
-                        .resolvedConfiguration
-                        .firstLevelModuleDependencies
-
-                    dmDeps.children().findAll { it instanceof groovy.util.Node }.each { depNode ->
-                        def groupId = depNode.get('groupId')?.text()
-                        def artifactId = depNode.get('artifactId')?.text()
-                        def versionNode = depNode.get('version')
-
-                        if (!versionNode || versionNode.text().trim() == '') {
-                            def resolved = resolvedAll.find {
-                                it.moduleGroup == groupId && it.moduleName == artifactId
-                            }
-
-                            if (resolved) {
-                                depNode.appendNode('version', resolved.moduleVersion)
-                                logger.lifecycle("Injected BOM version: ${groupId}:${artifactId}:${resolved.moduleVersion}")
-                            } else {
-                                logger.warn("Could not resolve BOM version for ${groupId}:${artifactId}")
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
