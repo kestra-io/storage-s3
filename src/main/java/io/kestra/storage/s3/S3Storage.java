@@ -97,6 +97,11 @@ public class S3Storage implements S3Config, StorageInterface {
         return exists(path);
     }
 
+    @Override
+    public boolean existsInstanceResource(@Nullable String namespace, URI uri) {
+        return exists(getPath(uri));
+    }
+
     private boolean exists(String path) {
         try {
             HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
@@ -115,6 +120,11 @@ public class S3Storage implements S3Config, StorageInterface {
         return this.getWithMetadata(tenantId, namespace, uri).inputStream();
     }
 
+    @Override
+    public InputStream getInstanceResource(@Nullable String namespace, URI uri) throws IOException {
+        return this.getWithMetadata(getPath(uri)).inputStream();
+    }
+
     @VisibleForTesting
     void createBucket() throws IOException {
         try {
@@ -128,6 +138,10 @@ public class S3Storage implements S3Config, StorageInterface {
     @Override
     public StorageObject getWithMetadata(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
+        return getWithMetadata(path);
+    }
+
+    private StorageObject getWithMetadata(String path) throws IOException {
         try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
             GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(this.getBucket())
@@ -149,7 +163,8 @@ public class S3Storage implements S3Config, StorageInterface {
                 resultInputStream = InputStream.nullInputStream();
             }
 
-            return new StorageObject(MetadataUtils.toRetrievedMetadata(result.response().metadata()), resultInputStream);
+            return new StorageObject(
+                MetadataUtils.toRetrievedMetadata(result.response().metadata()), resultInputStream);
         } catch (ExecutionException e) {
             if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
                 throw new FileNotFoundException();
@@ -179,6 +194,28 @@ public class S3Storage implements S3Config, StorageInterface {
             if (list.isEmpty()) {
                 // this will throw FileNotFound if there is no directory
                 this.getAttributes(tenantId, namespace, uri);
+            }
+            return list;
+        } catch (NoSuchKeyException exception) {
+            throw new FileNotFoundException();
+        } catch (AwsServiceException exception) {
+            throw new IOException(exception);
+        }
+    }
+
+    @Override
+    public List<FileAttributes> listInstanceResource(@Nullable String namespace, URI uri) throws IOException {
+        String path = getPath(uri);
+        String prefix = path.endsWith("/") ? path : path + "/";
+        //in case uri is null, we need to search in the root ("")
+        prefix = prefix.equals("/") ? "" : prefix;
+        try {
+            List<FileAttributes> list = keysForPrefix(prefix, false, true)
+                .map(throwFunction(this::getFileAttributes))
+                .toList();
+            if (list.isEmpty()) {
+                // this will throw FileNotFound if there is no directory
+                this.getInstanceAttributes(namespace, uri);
             }
             return list;
         } catch (NoSuchKeyException exception) {
@@ -226,6 +263,15 @@ public class S3Storage implements S3Config, StorageInterface {
     @Override
     public FileAttributes getAttributes(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
+        return getAttributes(path);
+    }
+
+    @Override
+    public FileAttributes getInstanceAttributes(@Nullable String namespace, URI uri) throws IOException {
+        return getAttributes(getPath(uri));
+    }
+
+    private FileAttributes getAttributes(String path) throws IOException {
         try {
             return getFileAttributes(path);
         } catch (FileNotFoundException e) {
@@ -260,11 +306,23 @@ public class S3Storage implements S3Config, StorageInterface {
 
     @Override
     public URI put(String tenantId, @Nullable String namespace, URI uri, StorageObject storageObject) throws IOException {
+        String path = getPath(tenantId, uri);
+        put(storageObject, path);
+        return createUri(tenantId, uri.getPath());
+    }
+
+    @Override
+    public URI putInstanceResource(@Nullable String namespace, URI uri, StorageObject storageObject) throws IOException {
+        String path = getPath(uri);
+        put(storageObject, path);
+        return createUri(null, uri.getPath());
+    }
+
+    private void put(StorageObject storageObject, String path) throws IOException {
         try (
             InputStream data = storageObject.inputStream();
             S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()
         ) {
-            String path = getPath(tenantId, uri);
             mkdirs(path);
             PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(this.getBucket())
@@ -295,7 +353,6 @@ public class S3Storage implements S3Config, StorageInterface {
             upload = Optional.of(transferManager.upload(uploadRequest.build()));
             upload.orElseThrow(IOException::new).completionFuture().get();
 
-            return createUri(tenantId, uri.getPath());
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         } catch (ExecutionException | InterruptedException exception) {
@@ -318,6 +375,22 @@ public class S3Storage implements S3Config, StorageInterface {
         return deleteSingleObject(getPath(tenantId, uri));
     }
 
+    @Override
+    public boolean deleteInstanceResource(@Nullable String namespace, URI uri) throws IOException {
+        FileAttributes fileAttributes;
+        try {
+            fileAttributes = getInstanceAttributes(namespace, uri);
+        } catch (FileNotFoundException e) {
+            return false;
+        }
+        String path = getPath(uri);
+        if (fileAttributes.getType() == FileAttributes.FileType.Directory) {
+            deleteByPrefix(null, uri.getPath().endsWith("/") ? path : path + "/");
+        }
+
+        return deleteSingleObject(path);
+    }
+
     private boolean deleteSingleObject(String path) {
         DeleteObjectRequest deleteRequest = DeleteObjectRequest.builder()
             .bucket(this.getBucket())
@@ -330,6 +403,18 @@ public class S3Storage implements S3Config, StorageInterface {
     @Override
     public URI createDirectory(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
+        createDirectory(path);
+        return createUri(tenantId, uri.getPath());
+    }
+
+    @Override
+    public URI createInstanceDirectory(String namespace, URI uri) throws IOException {
+        String path = getPath(uri);
+        createDirectory(path);
+        return createUri(null, uri.getPath());
+    }
+
+    private void createDirectory(String path) throws IOException {
         if (!StringUtils.endsWith(path, "/")) {
             path += "/";
         }
@@ -339,7 +424,6 @@ public class S3Storage implements S3Config, StorageInterface {
             .key(path)
             .build();
         s3Client.putObject(putRequest, RequestBody.empty());
-        return createUri(tenantId, uri.getPath());
     }
 
     private void mkdirs(String path) throws IOException {
@@ -423,9 +507,14 @@ public class S3Storage implements S3Config, StorageInterface {
 
     @Override
     public List<URI> deleteByPrefix(String tenantId, @Nullable String namespace, URI storagePrefix) throws IOException {
+        String path = getPath(tenantId, storagePrefix);
+        return deleteByPrefix(tenantId, path);
+    }
+
+    private List<URI> deleteByPrefix(String tenantId, String path) throws IOException {
         ListObjectsRequest listRequest = ListObjectsRequest.builder()
             .bucket(this.getBucket())
-            .prefix(getPath(tenantId, storagePrefix))
+            .prefix(path)
             .build();
         ListObjectsResponse objectListing = s3Client.listObjects(listRequest);
 
