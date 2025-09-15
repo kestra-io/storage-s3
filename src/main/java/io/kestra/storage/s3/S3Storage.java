@@ -9,7 +9,8 @@ import jakarta.annotation.Nullable;
 import jakarta.validation.constraints.NotEmpty;
 import lombok.*;
 import lombok.extern.jackson.Jacksonized;
-import org.apache.commons.lang3.StringUtils;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
@@ -52,6 +53,7 @@ import static io.kestra.core.utils.Rethrow.throwFunction;
 @Getter
 @Plugin
 @Plugin.Id("s3")
+@Slf4j
 public class S3Storage implements S3Config, StorageInterface {
     private static final Logger LOG = LoggerFactory.getLogger(S3Storage.class);
     private static final Pattern METADATA_KEY_WORD_SEPARATOR = Pattern.compile("_([a-z])");
@@ -308,14 +310,14 @@ public class S3Storage implements S3Config, StorageInterface {
     public URI put(String tenantId, @Nullable String namespace, URI uri, StorageObject storageObject) throws IOException {
         String path = getPath(tenantId, uri);
         put(storageObject, path);
-        return createUri(tenantId, uri.getPath());
+        return createUri(uri.getPath());
     }
 
     @Override
     public URI putInstanceResource(@Nullable String namespace, URI uri, StorageObject storageObject) throws IOException {
         String path = getPath(uri);
         put(storageObject, path);
-        return createUri(null, uri.getPath());
+        return createUri(uri.getPath());
     }
 
     private void put(StorageObject storageObject, String path) throws IOException {
@@ -404,18 +406,18 @@ public class S3Storage implements S3Config, StorageInterface {
     public URI createDirectory(String tenantId, @Nullable String namespace, URI uri) throws IOException {
         String path = getPath(tenantId, uri);
         createDirectory(path);
-        return createUri(tenantId, uri.getPath());
+        return createUri(uri.getPath());
     }
 
     @Override
     public URI createInstanceDirectory(String namespace, URI uri) throws IOException {
         String path = getPath(uri);
         createDirectory(path);
-        return createUri(null, uri.getPath());
+        return createUri(uri.getPath());
     }
 
     private void createDirectory(String path) throws IOException {
-        if (!StringUtils.endsWith(path, "/")) {
+        if (!Strings.CS.endsWith(path, "/")) {
             path += "/";
         }
         mkdirs(path);
@@ -487,7 +489,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 move(source, dest);
             }
 
-            return createUri(tenantId, to.getPath());
+            return createUri(to.getPath());
         } catch (AwsServiceException | SdkClientException exception) {
             throw new IOException(exception);
         }
@@ -542,15 +544,19 @@ public class S3Storage implements S3Config, StorageInterface {
             return result.deleted().stream()
                 .map(DeletedObject::key)
                 .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
-                .map(key -> createUri(tenantId, key))
+                .map(k -> createUri(removeTenant(tenantId, k)))
                 .toList();
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
     }
 
-    private static URI createUri(String tenantId, String key) {
-        return URI.create(tenantId == null ? "kestra://%s".formatted(key) : "kestra://%s".formatted(key).replace(tenantId, ""));
+    private static String removeTenant(String tenantId, String k) {
+        return tenantId == null ? "/" + k : k.replaceFirst(tenantId, "");
+    }
+
+    private static URI createUri(String key) {
+        return URI.create("kestra://%s".formatted(key));
     }
 
     @Override
