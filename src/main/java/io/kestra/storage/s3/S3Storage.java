@@ -295,7 +295,7 @@ public class S3Storage implements S3Config, StorageInterface {
             upload = Optional.of(transferManager.upload(uploadRequest.build()));
             upload.orElseThrow(IOException::new).completionFuture().get();
 
-            return createUri(tenantId, uri.getPath());
+            return createUri(uri.getPath());
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         } catch (ExecutionException | InterruptedException exception) {
@@ -339,7 +339,7 @@ public class S3Storage implements S3Config, StorageInterface {
             .key(path)
             .build();
         s3Client.putObject(putRequest, RequestBody.empty());
-        return createUri(tenantId, uri.getPath());
+        return createUri(uri.getPath());
     }
 
     private void mkdirs(String path) throws IOException {
@@ -403,7 +403,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 move(source, dest);
             }
 
-            return createUri(tenantId, to.getPath());
+            return createUri(to.getPath());
         } catch (AwsServiceException | SdkClientException exception) {
             throw new IOException(exception);
         }
@@ -453,15 +453,19 @@ public class S3Storage implements S3Config, StorageInterface {
             return result.deleted().stream()
                 .map(DeletedObject::key)
                 .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
-                .map(key -> createUri(tenantId, key))
+                .map(k -> createUri(removeTenant(tenantId, k)))
                 .toList();
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
     }
 
-    private static URI createUri(String tenantId, String key) {
-        return URI.create(tenantId == null ? "kestra://%s".formatted(key) : "kestra://%s".formatted(key).replace(tenantId, ""));
+    private static String removeTenant(String tenantId, String k) {
+        return tenantId == null ? "/" + k : k.replaceFirst(tenantId, "");
+    }
+
+    private static URI createUri(String key) {
+        return URI.create("kestra://%s".formatted(key));
     }
 
     @Override
