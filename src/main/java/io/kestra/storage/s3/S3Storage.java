@@ -63,6 +63,7 @@ public class S3Storage implements S3Config, StorageInterface {
     private String bucket;
     private String region;
     private String endpoint;
+    private String path;
     // Configuration for StaticCredentialsProvider
     private String accessKey;
     private String secretKey;
@@ -91,6 +92,15 @@ public class S3Storage implements S3Config, StorageInterface {
     public void init() {
         this.s3Client = S3ClientFactory.getS3Client(this);
         this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
+    }
+
+    @Override
+    public String getPath(String tenantId, URI uri) {
+        String basePath = StorageInterface.super.getPath(tenantId, uri);
+        if (path == null) {
+            return basePath;
+        }
+        return path + (path.endsWith("/") ? basePath :  "/" + basePath);
     }
 
     @Override
