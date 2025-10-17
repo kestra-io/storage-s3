@@ -36,6 +36,7 @@ class S3StorageTest extends StorageTestSuite {
             .bucket("kestra-unit-test")
             .region(localstack.getRegion())
             .endpoint(localstack.getEndpoint().toString())
+            .path("kestra")
             .build();
         storageInterface.init();
     }
