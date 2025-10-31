@@ -321,6 +321,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private void put(StorageObject storageObject, String path) throws IOException {
+        validateObjectNameLength(path);
         try (
             InputStream data = storageObject.inputStream();
             S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()
@@ -417,6 +418,8 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private void createDirectory(String path) throws IOException {
+        validateObjectNameLength(path);
+        
         if (!Strings.CS.endsWith(path, "/")) {
             path += "/";
         }
@@ -555,10 +558,22 @@ public class S3Storage implements S3Config, StorageInterface {
         return tenantId == null ? "/" + k : k.replaceFirst(tenantId, "");
     }
 
+    private void validateObjectNameLength(String key) {
+    if (key == null) {
+        throw new IllegalArgumentException("Object key cannot be null");
+    }
+    if (key.length() > 1024) { // S3 max object key length
+        throw new IllegalArgumentException("Object key length exceeds S3 limit (1024 bytes): " + key);
+    }
+}
     private static URI createUri(String key) {
         return URI.create("kestra://%s".formatted(key));
     }
 
+    @Override
+    public int maxObjectNameLength() {
+        return 1024; // S3 max object key length
+    }
     @Override
     public void close() {
         if (this.s3Client != null) {
