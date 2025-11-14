@@ -38,10 +38,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static io.kestra.core.utils.Rethrow.throwFunction;
@@ -320,7 +320,10 @@ public class S3Storage implements S3Config, StorageInterface {
         return createUri(uri.getPath());
     }
 
-    private void put(StorageObject storageObject, String path) throws IOException {
+    private void put(StorageObject storageObject, String path) throws IOException {     
+        URI uri = URI.create("kestra://" + path);
+        uri = limit(uri, maxObjectNameLength()); 
+        path = uri.getPath();    
         try (
             InputStream data = storageObject.inputStream();
             S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()
@@ -403,20 +406,24 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public URI createDirectory(String tenantId, @Nullable String namespace, URI uri) throws IOException {
-        String path = getPath(tenantId, uri);
-        createDirectory(path);
-        return createUri(uri.getPath());
-    }
+public URI createDirectory(String tenantId, @Nullable String namespace, URI uri) throws IOException {
+    String path = getPath(tenantId, uri);
+    URI limitedUri = limit(URI.create("kestra://" + path), maxObjectNameLength());
+    path = limitedUri.getPath();
+    createDirectory(path);
+    return limitedUri;
+}
 
     @Override
-    public URI createInstanceDirectory(String namespace, URI uri) throws IOException {
-        String path = getPath(uri);
-        createDirectory(path);
-        return createUri(uri.getPath());
-    }
+public URI createInstanceDirectory(String namespace, URI uri) throws IOException {
+    String path = getPath(uri);
+    URI limitedUri = limit(URI.create("kestra://" + path), maxObjectNameLength());
+    path = limitedUri.getPath();
+    createDirectory(path);
+    return limitedUri;
+}
 
-    private void createDirectory(String path) throws IOException {
+    private void createDirectory(String path) throws IOException {     
         if (!Strings.CS.endsWith(path, "/")) {
             path += "/";
         }
@@ -554,11 +561,15 @@ public class S3Storage implements S3Config, StorageInterface {
     private static String removeTenant(String tenantId, String k) {
         return tenantId == null ? "/" + k : k.replaceFirst(tenantId, "");
     }
-
     private static URI createUri(String key) {
         return URI.create("kestra://%s".formatted(key));
     }
+ 
 
+    @Override
+    public int maxObjectNameLength() {
+        return 1024; // S3 max object key length
+    }
     @Override
     public void close() {
         if (this.s3Client != null) {
