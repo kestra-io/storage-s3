@@ -25,6 +25,13 @@ public interface S3Config {
     String getEndpoint();
 
     @Schema(
+        title = "Object Path (key) within S3 bucket to store data",
+        description = "If set, we will end up using bucket/key path to store kestra data"
+    )
+    @PluginProperty
+    String getPath();
+
+    @Schema(
         title = "Access Key Id in order to connect to AWS.",
         description = "If no connection is defined, we will use the `DefaultCredentialsProvider` to fetch the value."
     )
