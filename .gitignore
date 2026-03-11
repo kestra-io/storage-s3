@@ -13,3 +13,5 @@ out/
 .settings
 .classpath
 .attach*
+.factorypath
+bin/
