@@ -1,18 +1,36 @@
 package io.kestra.storage.s3;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+import org.apache.commons.lang3.Strings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.common.annotations.VisibleForTesting;
+
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.storages.StorageObject;
+
 import jakarta.annotation.Nullable;
 import jakarta.validation.constraints.NotEmpty;
 import lombok.*;
 import lombok.extern.jackson.Jacksonized;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.Strings;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
@@ -28,21 +46,6 @@ import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
 import software.amazon.awssdk.transfer.s3.model.Upload;
 import software.amazon.awssdk.transfer.s3.model.UploadRequest;
 import software.amazon.awssdk.utils.builder.SdkBuilder;
-
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.nio.file.Path;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 import static io.kestra.core.utils.Rethrow.throwFunction;
 
@@ -100,7 +103,7 @@ public class S3Storage implements S3Config, StorageInterface {
         if (path == null) {
             return basePath;
         }
-        return path + (path.endsWith("/") ? basePath :  "/" + basePath);
+        return path + (path.endsWith("/") ? basePath : "/" + basePath);
     }
 
     @Override
@@ -176,7 +179,8 @@ public class S3Storage implements S3Config, StorageInterface {
             }
 
             return new StorageObject(
-                MetadataUtils.toRetrievedMetadata(result.response().metadata()), resultInputStream);
+                MetadataUtils.toRetrievedMetadata(result.response().metadata()), resultInputStream
+            );
         } catch (ExecutionException e) {
             if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
                 throw new FileNotFoundException();
@@ -257,7 +261,8 @@ public class S3Storage implements S3Config, StorageInterface {
 
             contents.stream()
                 .map(S3Object::key)
-                .filter(key -> {
+                .filter(key ->
+                {
                     String relativeKey = key.substring(prefix.length());
                     return !relativeKey.isEmpty()
                         && !Objects.equals(key, prefix)
@@ -301,8 +306,10 @@ public class S3Storage implements S3Config, StorageInterface {
                 .key(path)
                 .build();
             S3FileAttributes.S3FileAttributesBuilder builder = S3FileAttributes.builder()
-                .fileName(Optional.ofNullable(Path.of(path).getFileName()).map(Path::toString)
-                    .orElse("/"))
+                .fileName(
+                    Optional.ofNullable(Path.of(path).getFileName()).map(Path::toString)
+                        .orElse("/")
+                )
                 .head(s3Client.headObject(headObjectRequest));
             if (path.endsWith("/")) {
                 builder.isDirectory(true);
@@ -354,13 +361,15 @@ public class S3Storage implements S3Config, StorageInterface {
 
             UploadRequest.Builder uploadRequest = UploadRequest.builder()
                 .putObjectRequest(request)
-                .requestBody(AsyncRequestBody.fromInputStream(
-                    data,
-                    // If available bytes are equals to Integer.MAX_VALUE, then available bytes may be more than Integer.MAX_VALUE.
-                    // We set to null in this case, otherwise we would be limited to 2GB.
-                    length,
-                    Executors.newSingleThreadExecutor()
-                ));
+                .requestBody(
+                    AsyncRequestBody.fromInputStream(
+                        data,
+                        // If available bytes are equals to Integer.MAX_VALUE, then available bytes may be more than Integer.MAX_VALUE.
+                        // We set to null in this case, otherwise we would be limited to 2GB.
+                        length,
+                        Executors.newSingleThreadExecutor()
+                    )
+                );
 
             upload = Optional.of(transferManager.upload(uploadRequest.build()));
             upload.orElseThrow(IOException::new).completionFuture().get();

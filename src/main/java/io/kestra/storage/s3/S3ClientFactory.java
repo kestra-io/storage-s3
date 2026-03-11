@@ -1,6 +1,9 @@
 package io.kestra.storage.s3;
 
+import java.net.URI;
+
 import org.apache.commons.lang3.StringUtils;
+
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
@@ -16,8 +19,6 @@ import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.sts.StsClientBuilder;
 import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider;
 import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
-
-import java.net.URI;
 
 public final class S3ClientFactory {
 
@@ -72,8 +73,10 @@ public final class S3ClientFactory {
         }
 
         // StaticCredentialsProvider
-        if (StringUtils.isNotEmpty(config.getAccessKey()) &&
-            StringUtils.isNotEmpty(config.getSecretKey())) {
+        if (
+            StringUtils.isNotEmpty(config.getAccessKey()) &&
+                StringUtils.isNotEmpty(config.getSecretKey())
+        ) {
             return staticCredentialsProvider(config);
         }
 
@@ -129,15 +132,15 @@ public final class S3ClientFactory {
 
         final String stsEndpointOverride = config.getStsEndpointOverride();
         if (stsEndpointOverride != null) {
-            builder.applyMutation(stsClientBuilder ->
-                stsClientBuilder.endpointOverride(URI.create(stsEndpointOverride))
+            builder.applyMutation(
+                stsClientBuilder -> stsClientBuilder.endpointOverride(URI.create(stsEndpointOverride))
             );
         }
 
         final String regionString = config.getRegion();
         if (regionString != null) {
-            builder.applyMutation(stsClientBuilder ->
-                stsClientBuilder.region(Region.of(regionString))
+            builder.applyMutation(
+                stsClientBuilder -> stsClientBuilder.region(Region.of(regionString))
             );
         }
         return builder.build();

@@ -1,16 +1,18 @@
 package io.kestra.storage.s3;
 
+import java.io.*;
+import java.net.URI;
+
+import org.junit.jupiter.api.*;
+import org.testcontainers.containers.localstack.LocalStackContainer;
+import org.testcontainers.utility.DockerImageName;
+
 import io.kestra.core.storage.StorageTestSuite;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
-import org.junit.jupiter.api.*;
-import org.testcontainers.containers.localstack.LocalStackContainer;
-import org.testcontainers.utility.DockerImageName;
-import software.amazon.awssdk.core.ResponseInputStream;
 
-import java.io.*;
-import java.net.URI;
+import software.amazon.awssdk.core.ResponseInputStream;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;

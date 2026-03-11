@@ -1,9 +1,10 @@
 package io.kestra.storage.s3;
 
-import io.kestra.core.models.annotations.PluginProperty;
-import io.swagger.v3.oas.annotations.media.Schema;
-
 import java.time.Duration;
+
+import io.kestra.core.models.annotations.PluginProperty;
+
+import io.swagger.v3.oas.annotations.media.Schema;
 
 public interface S3Config {
 

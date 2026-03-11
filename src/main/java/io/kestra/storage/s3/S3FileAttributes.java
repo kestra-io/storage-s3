@@ -1,11 +1,12 @@
 package io.kestra.storage.s3;
 
+import java.util.Map;
+
 import io.kestra.core.storages.FileAttributes;
+
 import lombok.Builder;
 import lombok.Value;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-
-import java.util.Map;
 
 @Value
 public class S3FileAttributes implements FileAttributes {
@@ -34,6 +35,7 @@ public class S3FileAttributes implements FileAttributes {
      * the Last Modified date in the object Properties pane. When you initially create a new object, this date reflects
      * the date the object is created. If you replace the object, the date changes accordingly. So when we use the term
      * creation date, it is synonymous with the term last modified date.
+     * 
      * @return
      */
     @Override
