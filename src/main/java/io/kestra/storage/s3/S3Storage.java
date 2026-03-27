@@ -349,30 +349,26 @@ public class S3Storage implements S3Config, StorageInterface {
                 .metadata(MetadataUtils.toStoredMetadata(storageObject.metadata()))
                 .build();
 
-            Optional<Upload> upload;
-
-            Long length = (long) data.available();
+            // Only use a known content length from a previous S3 GetObject response.
+            // Do NOT use InputStream.available() as it is unreliable and may return 0
+            // even when data is present, causing the S3 Transfer Manager to upload an empty object.
+            Long contentLength = null;
             if (data instanceof ResponseInputStream<?> responseInputStream && responseInputStream.response() instanceof GetObjectResponse getObjectResponse) {
-                length = getObjectResponse.contentLength();
-            }
-            if (length == Integer.MAX_VALUE) {
-                length = null;
+                contentLength = getObjectResponse.contentLength();
             }
 
-            UploadRequest.Builder uploadRequest = UploadRequest.builder()
+            UploadRequest uploadRequest = UploadRequest.builder()
                 .putObjectRequest(request)
                 .requestBody(
                     AsyncRequestBody.fromInputStream(
                         data,
-                        // If available bytes are equals to Integer.MAX_VALUE, then available bytes may be more than Integer.MAX_VALUE.
-                        // We set to null in this case, otherwise we would be limited to 2GB.
-                        length,
+                        contentLength,
                         Executors.newSingleThreadExecutor()
                     )
-                );
+                )
+                .build();
 
-            upload = Optional.of(transferManager.upload(uploadRequest.build()));
-            upload.orElseThrow(IOException::new).completionFuture().get();
+            transferManager.upload(uploadRequest).completionFuture().get();
 
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
