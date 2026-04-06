@@ -13,63 +13,63 @@ public interface S3Config {
     @Schema(
         title = "The S3 bucket where to store internal objects."
     )
-    @PluginProperty
+    @PluginProperty(group = "connection")
     String getBucket();
 
     @Schema(
         title = "AWS region with which the SDK should communicate."
     )
-    @PluginProperty
+    @PluginProperty(group = "connection")
     String getRegion();
 
-    @PluginProperty
+    @PluginProperty(group = "connection")
     String getEndpoint();
 
     @Schema(
         title = "Object Path (key) within S3 bucket to store data",
         description = "If set, we will end up using bucket/key path to store kestra data"
     )
-    @PluginProperty
+    @PluginProperty(group = "advanced")
     String getPath();
 
     @Schema(
         title = "Access Key Id in order to connect to AWS.",
         description = "If no connection is defined, we will use the `DefaultCredentialsProvider` to fetch the value."
     )
-    @PluginProperty
+    @PluginProperty(group = "connection")
     String getAccessKey();
 
     @Schema(
         title = "Secret Key Id in order to connect to AWS.",
         description = "If no connection is defined, we will use the `DefaultCredentialsProvider` to fetch the value."
     )
-    @PluginProperty
+    @PluginProperty(group = "connection")
     String getSecretKey();
 
     @Schema(
         title = "AWS STS Role.",
         description = "The Amazon Resource Name (ARN) of the role to assume. If set the task will use the `StsAssumeRoleCredentialsProvider`. Otherwise, the `StaticCredentialsProvider` will be used with the provided Access Key Id and Secret Key."
     )
-    @PluginProperty
+    @PluginProperty(group = "advanced")
     String getStsRoleArn();
 
     @Schema(
         title = "AWS STS External Id.",
         description = " A unique identifier that might be required when you assume a role in another account. This property is only used when an `stsRoleArn` is defined."
     )
-    @PluginProperty
+    @PluginProperty(group = "advanced")
     String getStsRoleExternalId();
 
     @Schema(
         title = "AWS STS Session name. This property is only used when an `stsRoleArn` is defined."
     )
-    @PluginProperty
+    @PluginProperty(group = "advanced")
     String getStsRoleSessionName();
 
     @Schema(
         title = "The AWS STS endpoint with which the SDKClient should communicate."
     )
-    @PluginProperty
+    @PluginProperty(group = "advanced")
     String getStsEndpointOverride();
 
     @Schema(
