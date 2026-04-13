@@ -13,6 +13,7 @@ import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
 
 import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.services.s3.model.*;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
@@ -115,5 +116,34 @@ class S3StorageTest extends StorageTestSuite {
         // Check that the original files no longer exist
         var sourceFiles = storageInterface.allByPrefix(TenantService.MAIN_TENANT, null, sourceUri, false);
         assertThat("Source directory should be empty after move", sourceFiles, is(empty()));
+    }
+
+    @Test
+    void s3FilesCompatibleModeEnablesBucketVersioning() throws IOException {
+        S3Storage plain = S3Storage.builder()
+            .accessKey(localstack.getAccessKey())
+            .secretKey(localstack.getSecretKey())
+            .bucket("kestra-unit-test")
+            .region(localstack.getRegion())
+            .endpoint(localstack.getEndpoint().toString())
+            .path("kestra")
+            .s3FilesCompatible(false)
+            .build();
+        plain.init(); plain.createBucket();
+
+        S3Storage compat = S3Storage.builder()
+            .accessKey(localstack.getAccessKey())
+            .secretKey(localstack.getSecretKey())
+            .bucket("kestra-unit-test")
+            .region(localstack.getRegion())
+            .endpoint(localstack.getEndpoint().toString())
+            .path("kestra")
+            .s3FilesCompatible(true)
+            .build();
+        compat.init();
+
+        GetBucketVersioningResponse resp = plain.getS3ClientForTest()
+            .getBucketVersioning(GetBucketVersioningRequest.builder().bucket("kestra-unit-test").build());
+        assertThat(resp.status(), is(BucketVersioningStatus.ENABLED));
     }
 }

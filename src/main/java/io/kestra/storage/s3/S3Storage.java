@@ -79,6 +79,8 @@ public class S3Storage implements S3Config, StorageInterface {
 
     private boolean forcePathStyle;
 
+    private boolean s3FilesCompatible;
+
     @Builder.Default
     private Duration stsRoleSessionDuration = AWS_MIN_STS_ROLE_SESSION_DURATION;
 
@@ -95,6 +97,9 @@ public class S3Storage implements S3Config, StorageInterface {
     public void init() {
         this.s3Client = S3ClientFactory.getS3Client(this);
         this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
+        if (s3FilesCompatible) {
+            enableBucketVersioning();
+        }
     }
 
     @Override
@@ -148,6 +153,11 @@ public class S3Storage implements S3Config, StorageInterface {
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
+    }
+
+    @VisibleForTesting
+    S3Client getS3ClientForTest() {
+        return s3Client;
     }
 
     @Override
@@ -409,12 +419,86 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private boolean deleteSingleObject(String path) {
+        if (s3FilesCompatible) {
+            return deleteAllVersions(path);
+        }
+
         DeleteObjectRequest deleteRequest = DeleteObjectRequest.builder()
             .bucket(this.getBucket())
             .key(path)
             .build();
 
         return s3Client.deleteObject(deleteRequest).sdkHttpResponse().isSuccessful();
+    }
+
+    private void enableBucketVersioning() {
+        try {
+            s3Client.putBucketVersioning(PutBucketVersioningRequest.builder()
+                .bucket(getBucket())
+                .versioningConfiguration(VersioningConfiguration.builder()
+                    .status(BucketVersioningStatus.ENABLED)
+                    .build())
+                .build());
+        } catch (AwsServiceException e) {
+            throw new RuntimeException("Failed to enable versioning for S3 Files compatibility", e);
+        }
+    }
+
+    private boolean deleteAllVersions(String key) {
+        try {
+            List<ObjectIdentifier> toDelete = new ArrayList<>();
+            String keyMarker = null;
+            String versionIdMarker = null;
+
+            do {
+                ListObjectVersionsRequest.Builder builder = ListObjectVersionsRequest.builder()
+                    .bucket(this.getBucket())
+                    .prefix(key);
+
+                if (keyMarker != null) {
+                    builder.keyMarker(keyMarker);
+                }
+                if (versionIdMarker != null) {
+                    builder.versionIdMarker(versionIdMarker);
+                }
+
+                ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
+                keyMarker = response.nextKeyMarker();
+                versionIdMarker = response.nextVersionIdMarker();
+
+                for (ObjectVersion v : response.versions()) {
+                    if (Objects.equals(v.key(), key)) {
+                        toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build());
+                    }
+                }
+                for (DeleteMarkerEntry dm : response.deleteMarkers()) {
+                    if (Objects.equals(dm.key(), key)) {
+                        toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build());
+                    }
+                }
+
+                if (toDelete.size() >= 1000) {
+                    s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                        .bucket(this.getBucket())
+                        .delete(d -> d.objects(toDelete))
+                        .build());
+                    toDelete.clear();
+                }
+
+            } while (keyMarker != null || versionIdMarker != null);
+
+            if (!toDelete.isEmpty()) {
+                s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                    .bucket(this.getBucket())
+                    .delete(d -> d.objects(toDelete))
+                    .build());
+            }
+
+            return true;
+        } catch (AwsServiceException e) {
+            LOG.error("Failed to delete all versions for {}", key, e);
+            return false;
+        }
     }
 
     @Override
@@ -529,6 +613,9 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private List<URI> deleteByPrefix(String tenantId, String path) throws IOException {
+        if (s3FilesCompatible) {
+            return deleteByPrefixVersioned(tenantId, path);
+        }
         ListObjectsRequest listRequest = ListObjectsRequest.builder()
             .bucket(this.getBucket())
             .prefix(path)
@@ -563,6 +650,64 @@ public class S3Storage implements S3Config, StorageInterface {
                 .toList();
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
+        }
+    }
+
+    private List<URI> deleteByPrefixVersioned(String tenantId, String path) throws IOException {
+        try {
+            List<URI> deletedUris = new ArrayList<>();
+            List<ObjectIdentifier> toDelete = new ArrayList<>();
+
+            String keyMarker = null;
+            String versionIdMarker = null;
+
+            do {
+                ListObjectVersionsRequest.Builder builder = ListObjectVersionsRequest.builder()
+                    .bucket(this.getBucket())
+                    .prefix(path);
+
+                if (keyMarker != null) builder.keyMarker(keyMarker);
+                if (versionIdMarker != null) builder.versionIdMarker(versionIdMarker);
+
+                ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
+                keyMarker = response.nextKeyMarker();
+                versionIdMarker = response.nextVersionIdMarker();
+
+                response.versions().forEach(v -> toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build()));
+                response.deleteMarkers().forEach(dm -> toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build()));
+
+                if (toDelete.size() >= 1000) {
+                    DeleteObjectsResponse resp = s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                        .bucket(this.getBucket())
+                        .delete(d -> d.objects(toDelete))
+                        .build());
+
+                    deletedUris.addAll(resp.deleted().stream()
+                        .map(DeletedObject::key)
+                        .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
+                        .map(k -> createUri(removeTenant(tenantId, k)))
+                        .toList());
+
+                    toDelete.clear();
+                }
+            } while (keyMarker != null || versionIdMarker != null);
+
+            if (!toDelete.isEmpty()) {
+                DeleteObjectsResponse resp = s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                    .bucket(this.getBucket())
+                    .delete(d -> d.objects(toDelete))
+                    .build());
+
+                deletedUris.addAll(resp.deleted().stream()
+                    .map(DeletedObject::key)
+                    .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
+                    .map(k -> createUri(removeTenant(tenantId, k)))
+                    .toList());
+            }
+
+            return deletedUris;
+        } catch (AwsServiceException e) {
+            throw new IOException(e);
         }
     }
 
