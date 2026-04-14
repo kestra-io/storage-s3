@@ -3,13 +3,16 @@ package io.kestra.storage.s3;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -102,7 +105,7 @@ public class S3FilesStorage implements StorageInterface {
         if (!Files.exists(p)) {
             throw new FileNotFoundException();
         }
-        return new StorageObject(Map.of(), Files.newInputStream(p));
+        return new StorageObject(readMetaSidecar(p), Files.newInputStream(p));
     }
 
     private StorageObject getWithMetadata(String path) throws IOException {
@@ -111,7 +114,36 @@ public class S3FilesStorage implements StorageInterface {
         if (!Files.exists(p)) {
             throw new FileNotFoundException();
         }
-        return new StorageObject(Map.of(), Files.newInputStream(p));
+        return new StorageObject(readMetaSidecar(p), Files.newInputStream(p));
+    }
+
+    private Map<String, String> readMetaSidecar(Path p) throws IOException {
+        Path metaPath = Path.of(p + ".meta");
+        if (!Files.exists(metaPath)) {
+            return Map.of();
+        }
+        var props = new Properties();
+        try (InputStream metaIn = Files.newInputStream(metaPath)) {
+            props.load(metaIn);
+        }
+        var stored = new HashMap<String, String>();
+        for (var key : props.stringPropertyNames()) {
+            stored.put(key, props.getProperty(key));
+        }
+        return MetadataUtils.toRetrievedMetadata(stored);
+    }
+
+    private void writeMetaSidecar(Path dest, Map<String, String> metadata) throws IOException {
+        Path metaPath = Path.of(dest + ".meta");
+        if (metadata != null && !metadata.isEmpty()) {
+            var props = new Properties();
+            props.putAll(MetadataUtils.toStoredMetadata(metadata));
+            try (OutputStream os = Files.newOutputStream(metaPath)) {
+                props.store(os, null);
+            }
+        } else {
+            Files.deleteIfExists(metaPath);
+        }
     }
 
     @Override
@@ -127,11 +159,15 @@ public class S3FilesStorage implements StorageInterface {
             try (Stream<Path> walk = Files.walk(start)) {
                 return walk
                     .filter(p -> !p.equals(start))
+                    .filter(p -> !p.getFileName().toString().endsWith(".meta"))
                     .filter(p -> includeDirectories || !Files.isDirectory(p))
                     .map(p -> {
                         String relative = start.relativize(p).toString().replace("\\", "/");
                         String prefixPath = prefix.getPath();
                         String combined = prefixPath + (prefixPath.endsWith("/") || relative.isEmpty() ? "" : "/") + relative;
+                        if (Files.isDirectory(p) && !combined.endsWith("/")) {
+                            combined = combined + "/";
+                        }
                         return URI.create("kestra://" + combined);
                     })
                     .collect(Collectors.toList());
@@ -151,6 +187,7 @@ public class S3FilesStorage implements StorageInterface {
         }
         try (var stream = Files.list(p)) {
             return stream
+                .filter(child -> !child.getFileName().toString().endsWith(".meta"))
                 .map(child -> {
                     try {
                         BasicFileAttributes attrs = Files.readAttributes(child, BasicFileAttributes.class);
@@ -176,6 +213,7 @@ public class S3FilesStorage implements StorageInterface {
         }
         try (var stream = Files.list(p)) {
             return stream
+                .filter(child -> !child.getFileName().toString().endsWith(".meta"))
                 .map(child -> {
                     try {
                         BasicFileAttributes attrs = Files.readAttributes(child, BasicFileAttributes.class);
@@ -218,6 +256,7 @@ public class S3FilesStorage implements StorageInterface {
         try (InputStream in = storageObject.inputStream()) {
             Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
         }
+        writeMetaSidecar(dest, storageObject.metadata());
         return createUri(uri.getPath());
     }
 
@@ -230,6 +269,7 @@ public class S3FilesStorage implements StorageInterface {
         try (InputStream in = storageObject.inputStream()) {
             Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
         }
+        writeMetaSidecar(dest, storageObject.metadata());
         return createUri(uri.getPath());
     }
 
@@ -291,6 +331,7 @@ public class S3FilesStorage implements StorageInterface {
             return false;
         }
         Files.delete(p);
+        Files.deleteIfExists(Path.of(p + ".meta"));
         return true;
     }
 
@@ -308,7 +349,7 @@ public class S3FilesStorage implements StorageInterface {
             try (Stream<Path> walk = Files.walk(srcStart)) {
                 List<Path> entries = walk.collect(Collectors.toList());
                 for (var p : entries) {
-                    if (p.equals(srcStart)) continue;  // skip root; handle after children
+                    if (p.equals(srcStart) || Files.isDirectory(p)) continue;
                     var relative = srcStart.relativize(p);
                     var target = dstStart.resolve(relative);
                     Files.createDirectories(target.getParent());
@@ -332,6 +373,10 @@ public class S3FilesStorage implements StorageInterface {
             guardTraversal(dst);
             Files.createDirectories(dst.getParent());
             Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+            Path srcMeta = Path.of(src + ".meta");
+            if (Files.exists(srcMeta)) {
+                Files.move(srcMeta, Path.of(dst + ".meta"), StandardCopyOption.REPLACE_EXISTING);
+            }
         }
 
         return createUri(to.getPath());
@@ -361,9 +406,16 @@ public class S3FilesStorage implements StorageInterface {
         List<URI> deleted = new ArrayList<>();
         for (Path p : paths) {
             Files.deleteIfExists(p);
+            if (p.getFileName().toString().endsWith(".meta")) {
+                continue;
+            }
             String relative = start.relativize(p).toString().replace("\\", "/");
             String combined = path + (path.endsWith("/") || relative.isEmpty() ? "" : "/") + relative;
-            deleted.add(createUri(removeTenant(tenantId, combined)));
+            String tenantStripped = removeTenant(tenantId, combined);
+            if (tenantStripped.endsWith("/")) {
+                tenantStripped = tenantStripped.substring(0, tenantStripped.length() - 1);
+            }
+            deleted.add(createUri(tenantStripped));
         }
         return deleted;
     }
