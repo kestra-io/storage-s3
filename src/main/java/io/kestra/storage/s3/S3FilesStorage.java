@@ -306,22 +306,28 @@ public class S3FilesStorage implements StorageInterface {
         if (attributes.getType() == FileAttributes.FileType.Directory) {
             Path srcStart = resolveLocalPath(source);
             Path dstStart = resolveLocalPath(dest);
+            guardTraversal(srcStart);
+            guardTraversal(dstStart);
+            Files.createDirectories(dstStart);
             try (Stream<Path> walk = Files.walk(srcStart)) {
-                walk.forEach(p -> {
+                List<Path> entries = walk.collect(Collectors.toList());
+                for (var p : entries) {
+                    if (p.equals(srcStart)) continue;  // skip root; handle after children
+                    var relative = srcStart.relativize(p);
+                    var target = dstStart.resolve(relative);
+                    Files.createDirectories(target.getParent());
+                    Files.move(p, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+            // Remove now-empty source subtree
+            try (Stream<Path> cleanup = Files.walk(srcStart)) {
+                cleanup.sorted(Comparator.reverseOrder()).forEach(p -> {
                     try {
-                        Path relative = srcStart.relativize(p);
-                        Path target = dstStart.resolve(relative);
-                        Files.createDirectories(target.getParent());
-                        Files.move(p, target, StandardCopyOption.REPLACE_EXISTING);
+                        Files.deleteIfExists(p);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
                 });
-            } catch (RuntimeException e) {
-                if (e.getCause() instanceof IOException io) {
-                    throw io;
-                }
-                throw e;
             }
         } else {
             Path src = resolveLocalPath(source);
