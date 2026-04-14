@@ -262,6 +262,7 @@ public class S3FilesStorage implements StorageInterface {
         }
         if (fileAttributes.getType() == FileAttributes.FileType.Directory) {
             deleteByPrefix(tenantId, namespace, uri.getPath().endsWith("/") ? uri : URI.create(uri + "/"));
+            return true;
         }
 
         return deleteSingleObject(getPath(tenantId, uri));
@@ -278,6 +279,7 @@ public class S3FilesStorage implements StorageInterface {
         String path = getPath(uri);
         if (fileAttributes.getType() == FileAttributes.FileType.Directory) {
             deleteByPrefix(null, uri.getPath().endsWith("/") ? path : path + "/");
+            return true;
         }
 
         return deleteSingleObject(path);
