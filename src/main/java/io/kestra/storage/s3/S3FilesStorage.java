@@ -126,6 +126,7 @@ public class S3FilesStorage implements StorageInterface {
 
             try (Stream<Path> walk = Files.walk(start)) {
                 return walk
+                    .filter(p -> !p.equals(start))
                     .filter(p -> includeDirectories || !Files.isDirectory(p))
                     .map(p -> {
                         String relative = start.relativize(p).toString().replace("\\", "/");
