@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.annotations.Plugin;
@@ -128,15 +129,17 @@ public class S3FilesStorage implements StorageInterface {
                 return List.of();
             }
 
-            return Files.walk(start)
-                .filter(p -> includeDirectories || !Files.isDirectory(p))
-                .map(p -> {
-                    String relative = start.relativize(p).toString().replace("\\", "/");
-                    String prefixPath = prefix.getPath();
-                    String combined = prefixPath + (prefixPath.endsWith("/") || relative.isEmpty() ? "" : "/") + relative;
-                    return URI.create("kestra://" + combined);
-                })
-                .collect(Collectors.toList());
+            try (Stream<Path> walk = Files.walk(start)) {
+                return walk
+                    .filter(p -> includeDirectories || !Files.isDirectory(p))
+                    .map(p -> {
+                        String relative = start.relativize(p).toString().replace("\\", "/");
+                        String prefixPath = prefix.getPath();
+                        String combined = prefixPath + (prefixPath.endsWith("/") || relative.isEmpty() ? "" : "/") + relative;
+                        return URI.create("kestra://" + combined);
+                    })
+                    .collect(Collectors.toList());
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -303,8 +306,8 @@ public class S3FilesStorage implements StorageInterface {
         if (attributes.getType() == FileAttributes.FileType.Directory) {
             Path srcStart = resolveLocalPath(source);
             Path dstStart = resolveLocalPath(dest);
-            try {
-                Files.walk(srcStart).forEach(p -> {
+            try (Stream<Path> walk = Files.walk(srcStart)) {
+                walk.forEach(p -> {
                     try {
                         Path relative = srcStart.relativize(p);
                         Path target = dstStart.resolve(relative);
@@ -349,7 +352,10 @@ public class S3FilesStorage implements StorageInterface {
             return new ArrayList<>();
         }
 
-        List<Path> paths = Files.walk(start).sorted(Comparator.reverseOrder()).collect(Collectors.toList());
+        List<Path> paths;
+        try (Stream<Path> walk = Files.walk(start)) {
+            paths = walk.sorted(Comparator.reverseOrder()).collect(Collectors.toList());
+        }
         List<URI> deleted = new ArrayList<>();
         for (Path p : paths) {
             Files.deleteIfExists(p);
