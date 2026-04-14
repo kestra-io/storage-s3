@@ -94,7 +94,7 @@ public class S3Storage implements S3Config, StorageInterface {
      * {@inheritDoc}
      **/
     @Override
-    public void init() {
+    public void init() throws IOException {
         this.s3Client = S3ClientFactory.getS3Client(this);
         this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
         if (s3FilesCompatible) {
@@ -431,7 +431,7 @@ public class S3Storage implements S3Config, StorageInterface {
         return s3Client.deleteObject(deleteRequest).sdkHttpResponse().isSuccessful();
     }
 
-    private void enableBucketVersioning() {
+    private void enableBucketVersioning() throws IOException {
         try {
             s3Client.putBucketVersioning(PutBucketVersioningRequest.builder()
                 .bucket(getBucket())
@@ -440,7 +440,7 @@ public class S3Storage implements S3Config, StorageInterface {
                     .build())
                 .build());
         } catch (AwsServiceException e) {
-            throw new RuntimeException("Failed to enable versioning for S3 Files compatibility", e);
+            throw new IOException("Failed to enable versioning for S3 Files compatibility", e);
         }
     }
 
