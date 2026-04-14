@@ -661,8 +661,8 @@ public class S3Storage implements S3Config, StorageInterface {
 
     private List<URI> deleteByPrefixVersioned(String tenantId, String path) throws IOException {
         try {
-            List<URI> deletedUris = new ArrayList<>();
             List<ObjectIdentifier> toDelete = new ArrayList<>();
+            List<String> flushedKeys = new ArrayList<>();
 
             String keyMarker = null;
             String versionIdMarker = null;
@@ -679,39 +679,42 @@ public class S3Storage implements S3Config, StorageInterface {
                 keyMarker = response.nextKeyMarker();
                 versionIdMarker = response.nextVersionIdMarker();
 
-                response.versions().forEach(v -> toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build()));
-                response.deleteMarkers().forEach(dm -> toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build()));
-
-                if (toDelete.size() >= 1000) {
-                    DeleteObjectsResponse resp = s3Client.deleteObjects(DeleteObjectsRequest.builder()
-                        .bucket(this.getBucket())
-                        .delete(d -> d.objects(toDelete))
-                        .build());
-
-                    deletedUris.addAll(resp.deleted().stream()
-                        .map(DeletedObject::key)
-                        .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
-                        .map(k -> createUri(removeTenant(tenantId, k)))
-                        .toList());
-
-                    toDelete.clear();
+                for (ObjectVersion v : response.versions()) {
+                    toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build());
+                    flushedKeys.add(v.key());
+                    if (toDelete.size() == 1000) {
+                        s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                            .bucket(this.getBucket())
+                            .delete(d -> d.objects(toDelete))
+                            .build());
+                        toDelete.clear();
+                    }
+                }
+                for (DeleteMarkerEntry dm : response.deleteMarkers()) {
+                    toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build());
+                    flushedKeys.add(dm.key());
+                    if (toDelete.size() == 1000) {
+                        s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                            .bucket(this.getBucket())
+                            .delete(d -> d.objects(toDelete))
+                            .build());
+                        toDelete.clear();
+                    }
                 }
             } while (keyMarker != null || versionIdMarker != null);
 
             if (!toDelete.isEmpty()) {
-                DeleteObjectsResponse resp = s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                s3Client.deleteObjects(DeleteObjectsRequest.builder()
                     .bucket(this.getBucket())
                     .delete(d -> d.objects(toDelete))
                     .build());
-
-                deletedUris.addAll(resp.deleted().stream()
-                    .map(DeletedObject::key)
-                    .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
-                    .map(k -> createUri(removeTenant(tenantId, k)))
-                    .toList());
             }
 
-            return deletedUris;
+            return flushedKeys.stream()
+                .distinct()
+                .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
+                .map(k -> createUri(removeTenant(tenantId, k)))
+                .toList();
         } catch (AwsServiceException e) {
             throw new IOException(e);
         }
