@@ -683,7 +683,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 for (ObjectVersion v : response.versions()) {
                     toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build());
                     flushedKeys.add(v.key());
-                    if (toDelete.size() == 1000) {
+                    if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
                         s3Client.deleteObjects(DeleteObjectsRequest.builder()
                             .bucket(this.getBucket())
                             .delete(d -> d.objects(toDelete))
@@ -694,7 +694,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 for (DeleteMarkerEntry dm : response.deleteMarkers()) {
                     toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build());
                     flushedKeys.add(dm.key());
-                    if (toDelete.size() == 1000) {
+                    if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
                         s3Client.deleteObjects(DeleteObjectsRequest.builder()
                             .bucket(this.getBucket())
                             .delete(d -> d.objects(toDelete))
