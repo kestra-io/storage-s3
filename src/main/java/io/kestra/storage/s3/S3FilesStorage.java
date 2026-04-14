@@ -338,6 +338,10 @@ public class S3FilesStorage implements StorageInterface {
         return deleteByPrefix(tenantId, path);
     }
 
+    private static String removeTenant(String tenantId, String k) {
+        return tenantId == null ? "/" + k : k.replaceFirst(tenantId, "");
+    }
+
     private List<URI> deleteByPrefix(String tenantId, String path) throws IOException {
         Path start = resolveLocalPath(path);
         guardTraversal(start);
@@ -351,7 +355,7 @@ public class S3FilesStorage implements StorageInterface {
             Files.deleteIfExists(p);
             String relative = start.relativize(p).toString().replace("\\", "/");
             String combined = path + (path.endsWith("/") || relative.isEmpty() ? "" : "/") + relative;
-            deleted.add(URI.create("kestra://" + combined));
+            deleted.add(createUri(removeTenant(tenantId, combined)));
         }
         return deleted;
     }
