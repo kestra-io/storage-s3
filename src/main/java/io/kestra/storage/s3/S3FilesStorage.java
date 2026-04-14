@@ -125,6 +125,7 @@ public class S3FilesStorage implements StorageInterface {
         String path = getPath(tenantId, prefix);
         Path start = resolveLocalPath(path);
         try {
+            guardTraversal(start);
             if (!Files.exists(start)) {
                 return List.of();
             }
