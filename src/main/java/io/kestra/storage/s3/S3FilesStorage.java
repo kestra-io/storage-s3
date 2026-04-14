@@ -58,11 +58,6 @@ public class S3FilesStorage implements StorageInterface {
     }
 
     @Override
-    public String getPath(String tenantId, URI uri) {
-        return StorageInterface.super.getPath(tenantId, uri);
-    }
-
-    @Override
     public boolean exists(String tenantId, @Nullable String namespace, URI uri) {
         String path = getPath(tenantId, uri);
         try {
