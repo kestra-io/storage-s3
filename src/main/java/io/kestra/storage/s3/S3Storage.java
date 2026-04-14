@@ -469,20 +469,26 @@ public class S3Storage implements S3Config, StorageInterface {
                 for (ObjectVersion v : response.versions()) {
                     if (Objects.equals(v.key(), key)) {
                         toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build());
+                        if (toDelete.size() == 1000) {
+                            s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                                .bucket(this.getBucket())
+                                .delete(d -> d.objects(toDelete))
+                                .build());
+                            toDelete.clear();
+                        }
                     }
                 }
                 for (DeleteMarkerEntry dm : response.deleteMarkers()) {
                     if (Objects.equals(dm.key(), key)) {
                         toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build());
+                        if (toDelete.size() == 1000) {
+                            s3Client.deleteObjects(DeleteObjectsRequest.builder()
+                                .bucket(this.getBucket())
+                                .delete(d -> d.objects(toDelete))
+                                .build());
+                            toDelete.clear();
+                        }
                     }
-                }
-
-                if (toDelete.size() >= 1000) {
-                    s3Client.deleteObjects(DeleteObjectsRequest.builder()
-                        .bucket(this.getBucket())
-                        .delete(d -> d.objects(toDelete))
-                        .build());
-                    toDelete.clear();
                 }
 
             } while (keyMarker != null || versionIdMarker != null);
