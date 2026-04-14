@@ -61,6 +61,7 @@ public class S3Storage implements S3Config, StorageInterface {
     private static final Logger LOG = LoggerFactory.getLogger(S3Storage.class);
     private static final Pattern METADATA_KEY_WORD_SEPARATOR = Pattern.compile("_([a-z])");
     private static final Pattern UPPERCASE = Pattern.compile("([A-Z])");
+    private static final int S3_MAX_DELETE_BATCH_SIZE = 1000;
 
     @NotEmpty
     private String bucket;
@@ -469,7 +470,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 for (ObjectVersion v : response.versions()) {
                     if (Objects.equals(v.key(), key)) {
                         toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build());
-                        if (toDelete.size() == 1000) {
+                        if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
                             s3Client.deleteObjects(DeleteObjectsRequest.builder()
                                 .bucket(this.getBucket())
                                 .delete(d -> d.objects(toDelete))
@@ -481,7 +482,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 for (DeleteMarkerEntry dm : response.deleteMarkers()) {
                     if (Objects.equals(dm.key(), key)) {
                         toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build());
-                        if (toDelete.size() == 1000) {
+                        if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
                             s3Client.deleteObjects(DeleteObjectsRequest.builder()
                                 .bucket(this.getBucket())
                                 .delete(d -> d.objects(toDelete))
