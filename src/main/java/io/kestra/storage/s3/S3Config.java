@@ -79,5 +79,13 @@ public interface S3Config {
     @PluginProperty
     java.time.Duration getStsRoleSessionDuration();
 
+    @Schema(
+        title = "Enable S3 Files compatibility mode.",
+        description = "Enables bucket versioning on init() (required by S3 Files). " +
+                      "Delete operations will purge all object versions and delete markers."
+    )
+    @PluginProperty(group = "advanced")
+    boolean isS3FilesCompatible();
+
     boolean isForcePathStyle();
 }
