@@ -7,8 +7,10 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -654,7 +656,7 @@ public class S3Storage implements S3Config, StorageInterface {
     private List<URI> deleteByPrefixVersioned(String tenantId, String path) throws IOException {
         try {
             List<ObjectIdentifier> toDelete = new ArrayList<>();
-            List<String> flushedKeys = new ArrayList<>();
+            Set<String> flushedKeys = new LinkedHashSet<>();
 
             String keyMarker = null;
             String versionIdMarker = null;
@@ -690,7 +692,6 @@ public class S3Storage implements S3Config, StorageInterface {
             flushVersionBatch(toDelete);
 
             return flushedKeys.stream()
-                .distinct()
                 .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
                 .map(k -> createUri(removeTenant(tenantId, k)))
                 .toList();
