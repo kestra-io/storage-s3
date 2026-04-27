@@ -456,12 +456,8 @@ public class S3Storage implements S3Config, StorageInterface {
                     .bucket(this.getBucket())
                     .prefix(key);
 
-                if (keyMarker != null) {
-                    builder.keyMarker(keyMarker);
-                }
-                if (versionIdMarker != null) {
-                    builder.versionIdMarker(versionIdMarker);
-                }
+                if (keyMarker != null) builder.keyMarker(keyMarker);
+                if (versionIdMarker != null) builder.versionIdMarker(versionIdMarker);
 
                 ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
                 keyMarker = response.nextKeyMarker();
@@ -471,11 +467,7 @@ public class S3Storage implements S3Config, StorageInterface {
                     if (Objects.equals(v.key(), key)) {
                         toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build());
                         if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
-                            s3Client.deleteObjects(DeleteObjectsRequest.builder()
-                                .bucket(this.getBucket())
-                                .delete(d -> d.objects(toDelete))
-                                .build());
-                            toDelete.clear();
+                            flushVersionBatch(toDelete);
                         }
                     }
                 }
@@ -483,29 +475,28 @@ public class S3Storage implements S3Config, StorageInterface {
                     if (Objects.equals(dm.key(), key)) {
                         toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build());
                         if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
-                            s3Client.deleteObjects(DeleteObjectsRequest.builder()
-                                .bucket(this.getBucket())
-                                .delete(d -> d.objects(toDelete))
-                                .build());
-                            toDelete.clear();
+                            flushVersionBatch(toDelete);
                         }
                     }
                 }
 
             } while (keyMarker != null || versionIdMarker != null);
 
-            if (!toDelete.isEmpty()) {
-                s3Client.deleteObjects(DeleteObjectsRequest.builder()
-                    .bucket(this.getBucket())
-                    .delete(d -> d.objects(toDelete))
-                    .build());
-            }
-
+            flushVersionBatch(toDelete);
             return true;
         } catch (AwsServiceException e) {
             LOG.error("Failed to delete all versions for {}", key, e);
             return false;
         }
+    }
+
+    private void flushVersionBatch(List<ObjectIdentifier> batch) {
+        if (batch.isEmpty()) return;
+        s3Client.deleteObjects(DeleteObjectsRequest.builder()
+            .bucket(this.getBucket())
+            .delete(d -> d.objects(batch))
+            .build());
+        batch.clear();
     }
 
     @Override
@@ -684,32 +675,19 @@ public class S3Storage implements S3Config, StorageInterface {
                     toDelete.add(ObjectIdentifier.builder().key(v.key()).versionId(v.versionId()).build());
                     flushedKeys.add(v.key());
                     if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
-                        s3Client.deleteObjects(DeleteObjectsRequest.builder()
-                            .bucket(this.getBucket())
-                            .delete(d -> d.objects(toDelete))
-                            .build());
-                        toDelete.clear();
+                        flushVersionBatch(toDelete);
                     }
                 }
                 for (DeleteMarkerEntry dm : response.deleteMarkers()) {
                     toDelete.add(ObjectIdentifier.builder().key(dm.key()).versionId(dm.versionId()).build());
                     flushedKeys.add(dm.key());
                     if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
-                        s3Client.deleteObjects(DeleteObjectsRequest.builder()
-                            .bucket(this.getBucket())
-                            .delete(d -> d.objects(toDelete))
-                            .build());
-                        toDelete.clear();
+                        flushVersionBatch(toDelete);
                     }
                 }
             } while (keyMarker != null || versionIdMarker != null);
 
-            if (!toDelete.isEmpty()) {
-                s3Client.deleteObjects(DeleteObjectsRequest.builder()
-                    .bucket(this.getBucket())
-                    .delete(d -> d.objects(toDelete))
-                    .build());
-            }
+            flushVersionBatch(toDelete);
 
             return flushedKeys.stream()
                 .distinct()
