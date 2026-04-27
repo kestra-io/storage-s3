@@ -11,8 +11,10 @@ import java.util.Properties;
 
 import io.kestra.core.storages.FileAttributes;
 import lombok.Value;
+import lombok.extern.slf4j.Slf4j;
 
 @Value
+@Slf4j
 public class S3FilesFileAttributes implements FileAttributes {
     Path filePath;
     BasicFileAttributes basicFileAttributes;
@@ -59,6 +61,7 @@ public class S3FilesFileAttributes implements FileAttributes {
             }
             return MetadataUtils.toRetrievedMetadata(stored);
         } catch (IOException e) {
+            log.warn("Failed to read metadata sidecar for {}", filePath, e);
             return Map.of();
         }
     }
