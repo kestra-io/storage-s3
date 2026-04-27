@@ -16,11 +16,12 @@ import java.util.Properties;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.annotations.Plugin;
+import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.storages.StorageObject;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import jakarta.annotation.Nullable;
 import jakarta.validation.constraints.NotEmpty;
@@ -37,6 +38,8 @@ import lombok.extern.slf4j.Slf4j;
 @Plugin.Id("s3files")
 @Slf4j
 public class S3FilesStorage implements StorageInterface {
+    @Schema(title = "Path to the locally-mounted S3 Files NFS filesystem directory.")
+    @PluginProperty
     @NotEmpty
     private String mountPath;
 
