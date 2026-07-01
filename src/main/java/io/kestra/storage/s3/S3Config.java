@@ -36,14 +36,14 @@ public interface S3Config {
         title = "Access Key Id in order to connect to AWS.",
         description = "If no connection is defined, we will use the `DefaultCredentialsProvider` to fetch the value."
     )
-    @PluginProperty(group = "connection")
+    @PluginProperty(secret = true, group = "connection")
     String getAccessKey();
 
     @Schema(
         title = "Secret Key Id in order to connect to AWS.",
         description = "If no connection is defined, we will use the `DefaultCredentialsProvider` to fetch the value."
     )
-    @PluginProperty(group = "connection")
+    @PluginProperty(secret = true, group = "connection")
     String getSecretKey();
 
     @Schema(
