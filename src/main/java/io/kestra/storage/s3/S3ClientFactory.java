@@ -9,6 +9,8 @@ import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.ApiName;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -25,6 +27,7 @@ public final class S3ClientFactory {
     public static S3Client getS3Client(final S3Config s3Config) {
         S3ClientBuilder clientBuilder = S3Client
             .builder()
+            .overrideConfiguration(userAgentConfig())
             // Use the httpClientBuilder to delegate the lifecycle management of the HTTP client to the AWS SDK
             .httpClientBuilder(serviceDefaults -> ApacheHttpClient.builder().build());
 
@@ -39,6 +42,16 @@ public final class S3ClientFactory {
         return clientBuilder
             .forcePathStyle(s3Config.isForcePathStyle())
             .credentialsProvider(getCredentials(s3Config))
+            .build();
+    }
+
+    private static ClientOverrideConfiguration userAgentConfig() {
+        final String version = S3ClientFactory.class.getPackage().getImplementationVersion();
+        return ClientOverrideConfiguration.builder()
+            .addApiName(ApiName.builder()
+                .name("kestra-storage-s3")
+                .version(version != null && !version.isEmpty() ? version : "dev")
+                .build())
             .build();
     }
 

@@ -22,6 +22,10 @@ public interface S3Config {
     @PluginProperty(group = "connection")
     String getRegion();
 
+    @Schema(
+        title = "The S3-compatible endpoint to connect to.",
+        description = "Set this to use an S3-compatible object store (Amazon S3, or a compatible provider such as Backblaze B2, Cloudflare R2, or MinIO). Leave unset for Amazon S3, where the region-default endpoint is used."
+    )
     @PluginProperty(group = "connection")
     String getEndpoint();
 
