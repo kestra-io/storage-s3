@@ -9,8 +9,10 @@ import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration;
 import software.amazon.awssdk.core.ApiName;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -23,6 +25,8 @@ import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider
 import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 
 public final class S3ClientFactory {
+
+    private static final String USER_AGENT_NAME = "kestra-storage-s3";
 
     public static S3Client getS3Client(final S3Config s3Config) {
         S3ClientBuilder clientBuilder = S3Client
@@ -46,13 +50,31 @@ public final class S3ClientFactory {
     }
 
     private static ClientOverrideConfiguration userAgentConfig() {
-        final String version = S3ClientFactory.class.getPackage().getImplementationVersion();
         return ClientOverrideConfiguration.builder()
-            .addApiName(ApiName.builder()
-                .name("kestra-storage-s3")
-                .version(version != null && !version.isEmpty() ? version : "dev")
-                .build())
+            .putAdvancedOption(SdkAdvancedClientOption.USER_AGENT_SUFFIX, USER_AGENT_NAME + "/" + version())
             .build();
+    }
+
+    /**
+     * The CRT-based {@link S3AsyncClient} builder exposes no client-level override configuration, so the same
+     * user-agent tag is carried by the object requests sent through it.
+     *
+     * @return an {@link AwsRequestOverrideConfiguration} holding the plugin user-agent.
+     */
+    static AwsRequestOverrideConfiguration userAgentRequestConfig() {
+        return AwsRequestOverrideConfiguration.builder()
+            .addApiName(
+                ApiName.builder()
+                    .name(USER_AGENT_NAME)
+                    .version(version())
+                    .build()
+            )
+            .build();
+    }
+
+    private static String version() {
+        final String version = S3ClientFactory.class.getPackage().getImplementationVersion();
+        return version != null && !version.isEmpty() ? version : "dev";
     }
 
     public static S3AsyncClient getAsyncS3Client(final S3Config s3Config) {

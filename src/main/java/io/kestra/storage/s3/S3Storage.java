@@ -174,6 +174,7 @@ public class S3Storage implements S3Config, StorageInterface {
             GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(this.getBucket())
                 .key(path)
+                .overrideConfiguration(S3ClientFactory.userAgentRequestConfig())
                 .build();
 
             Download<ResponseInputStream<GetObjectResponse>> download = transferManager.download(
@@ -360,6 +361,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 .bucket(this.getBucket())
                 .key(path)
                 .metadata(MetadataUtils.toStoredMetadata(storageObject.metadata()))
+                .overrideConfiguration(S3ClientFactory.userAgentRequestConfig())
                 .build();
 
             // Only use a known content length from a previous S3 GetObject response.
