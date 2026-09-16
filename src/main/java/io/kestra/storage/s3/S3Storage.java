@@ -4,6 +4,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -208,7 +209,7 @@ public class S3Storage implements S3Config, StorageInterface {
     public List<URI> allByPrefix(String tenantId, @Nullable String namespace, URI prefix, boolean includeDirectories) {
         String path = getPath(tenantId, prefix);
         return keysForPrefix(path, true, includeDirectories)
-            .map(key -> URI.create("kestra://" + prefix.getPath() + key.substring(path.length())))
+            .map(key -> createUri(prefix.getPath() + key.substring(path.length())))
             .toList();
     }
 
@@ -705,7 +706,11 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private static URI createUri(String key) {
-        return URI.create("kestra://%s".formatted(key));
+        try {
+            return new URI("kestra", "", key.startsWith("/") ? key : "/" + key, null, null);
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException("Invalid Kestra storage path: " + key, e);
+        }
     }
 
     @Override

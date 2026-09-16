@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
@@ -171,7 +172,7 @@ public class S3FilesStorage implements StorageInterface {
                         if (Files.isDirectory(p) && !combined.endsWith("/")) {
                             combined = combined + "/";
                         }
-                        return URI.create("kestra://" + combined);
+                        return createUri(combined);
                     })
                     .collect(Collectors.toList());
             }
@@ -429,6 +430,10 @@ public class S3FilesStorage implements StorageInterface {
     }
 
     private static URI createUri(String key) {
-        return URI.create("kestra://%s".formatted(key));
+        try {
+            return new URI("kestra", "", key.startsWith("/") ? key : "/" + key, null, null);
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException("Invalid Kestra storage path: " + key, e);
+        }
     }
 }
