@@ -15,6 +15,8 @@ import java.util.Set;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -65,6 +67,7 @@ public class S3Storage implements S3Config, StorageInterface {
     private static final Pattern METADATA_KEY_WORD_SEPARATOR = Pattern.compile("_([a-z])");
     private static final Pattern UPPERCASE = Pattern.compile("([A-Z])");
     private static final int S3_MAX_DELETE_BATCH_SIZE = 1000;
+    private static final Duration DOWNLOAD_RESPONSE_TIMEOUT = Duration.ofMinutes(5);
 
     @NotEmpty
     private String bucket;
@@ -171,6 +174,11 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private StorageObject getWithMetadata(String path) throws IOException {
+        // a folder is never a readable file, and some S3-compatible servers answer a GET on it with a never-ending download
+        if (path.endsWith("/")) {
+            throw new FileNotFoundException();
+        }
+
         try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
             GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(this.getBucket())
@@ -183,7 +191,15 @@ public class S3Storage implements S3Config, StorageInterface {
                     .responseTransformer(AsyncResponseTransformer.toBlockingInputStream())
                     .build()
             );
-            ResponseInputStream<GetObjectResponse> result = download.completionFuture().get().result();
+            // the future completes on the response headers, not on the end of the body, so this only bounds the time to first response
+            var completionFuture = download.completionFuture();
+            ResponseInputStream<GetObjectResponse> result;
+            try {
+                result = completionFuture.get(DOWNLOAD_RESPONSE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS).result();
+            } catch (TimeoutException e) {
+                completionFuture.cancel(true);
+                throw new IOException("No response from S3 for '" + path + "' after " + DOWNLOAD_RESPONSE_TIMEOUT, e);
+            }
             InputStream resultInputStream = result;
 
             boolean isEmpty = result.response().contentLength() == 0;
@@ -303,13 +319,36 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private FileAttributes getAttributes(String path) throws IOException {
+        if (path.endsWith("/")) {
+            return getDirectoryAttributes(path);
+        }
         try {
             return getFileAttributes(path);
         } catch (FileNotFoundException e) {
-            if (path.endsWith("/")) {
-                throw e;
+            return getDirectoryAttributes(path + "/");
+        }
+    }
+
+    // A listing is used instead of a HEAD on the marker as some S3-compatible servers disagree with AWS on HEAD for folders.
+    private FileAttributes getDirectoryAttributes(String directoryPath) throws IOException {
+        try {
+            var response = s3Client.listObjectsV2(ListObjectsV2Request.builder()
+                .bucket(this.getBucket())
+                .prefix(directoryPath)
+                .maxKeys(1)
+                .build());
+            if (response.contents().isEmpty()) {
+                throw new FileNotFoundException();
             }
-            return getFileAttributes(path + "/");
+            return S3FileAttributes.builder()
+                .fileName(Optional.ofNullable(Path.of(directoryPath).getFileName()).map(Path::toString).orElse("/"))
+                .lastModified(response.contents().getFirst().lastModified())
+                .isDirectory(true)
+                .build();
+        } catch (NoSuchKeyException exception) {
+            throw new FileNotFoundException();
+        } catch (AwsServiceException exception) {
+            throw new IOException(exception);
         }
     }
 
@@ -596,13 +635,21 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private void move(String oldKey, String newKey) {
-        CopyObjectRequest copyRequest = CopyObjectRequest.builder()
-            .sourceBucket(this.getBucket())
-            .sourceKey(oldKey)
-            .destinationBucket(this.getBucket())
-            .destinationKey(newKey)
-            .build();
-        s3Client.copyObject(copyRequest);
+        if (oldKey.endsWith("/")) {
+            // some S3-compatible servers fail to copy a folder marker, so it is recreated instead
+            s3Client.putObject(
+                PutObjectRequest.builder().bucket(this.getBucket()).key(newKey).build(),
+                RequestBody.empty()
+            );
+        } else {
+            CopyObjectRequest copyRequest = CopyObjectRequest.builder()
+                .sourceBucket(this.getBucket())
+                .sourceKey(oldKey)
+                .destinationBucket(this.getBucket())
+                .destinationKey(newKey)
+                .build();
+            s3Client.copyObject(copyRequest);
+        }
 
         deleteSingleObject(oldKey);
     }

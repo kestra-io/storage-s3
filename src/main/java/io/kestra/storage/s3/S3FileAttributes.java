@@ -1,8 +1,11 @@
 package io.kestra.storage.s3;
 
+import java.time.Instant;
 import java.util.Map;
 
 import io.kestra.core.storages.FileAttributes;
+
+import jakarta.annotation.Nullable;
 
 import lombok.Builder;
 import lombok.Value;
@@ -11,22 +14,26 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 @Value
 public class S3FileAttributes implements FileAttributes {
     String fileName;
+    // null for a directory resolved from a listing
+    @Nullable
     HeadObjectResponse head;
+    Instant lastModified;
     boolean isDirectory;
     Map<String, String> metadata;
 
     @Builder
-    public S3FileAttributes(String fileName, HeadObjectResponse head, boolean isDirectory) {
+    public S3FileAttributes(String fileName, @Nullable HeadObjectResponse head, @Nullable Instant lastModified, boolean isDirectory) {
         this.fileName = fileName;
         this.head = head;
+        this.lastModified = head != null ? head.lastModified() : lastModified;
         this.isDirectory = isDirectory;
 
-        this.metadata = MetadataUtils.toRetrievedMetadata(head.metadata());
+        this.metadata = head != null ? MetadataUtils.toRetrievedMetadata(head.metadata()) : Map.of();
     }
 
     @Override
     public long getLastModifiedTime() {
-        return head.lastModified().toEpochMilli();
+        return lastModified.toEpochMilli();
     }
 
     /**
@@ -40,12 +47,12 @@ public class S3FileAttributes implements FileAttributes {
      */
     @Override
     public long getCreationTime() {
-        return head.lastModified().toEpochMilli();
+        return lastModified.toEpochMilli();
     }
 
     @Override
     public FileType getType() {
-        if (isDirectory || fileName.endsWith("/") || head.contentType().equals("application/x-directory")) {
+        if (isDirectory || fileName.endsWith("/") || (head != null && "application/x-directory".equals(head.contentType()))) {
             return FileType.Directory;
         }
         return FileType.File;
@@ -53,7 +60,7 @@ public class S3FileAttributes implements FileAttributes {
 
     @Override
     public long getSize() {
-        return head.contentLength();
+        return head != null ? head.contentLength() : 0;
     }
 
     @Override
