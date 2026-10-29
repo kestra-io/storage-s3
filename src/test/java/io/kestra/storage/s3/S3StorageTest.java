@@ -2,12 +2,14 @@ package io.kestra.storage.s3;
 
 import java.io.*;
 import java.net.URI;
+import java.time.Duration;
 
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import io.kestra.core.storage.StorageTestSuite;
+import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
@@ -16,6 +18,8 @@ import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.s3.model.*;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.hamcrest.Matchers.*;
 import static org.testcontainers.containers.localstack.LocalStackContainer.Service.S3;
 
@@ -119,6 +123,42 @@ class S3StorageTest extends StorageTestSuite {
     }
 
     @Test
+    void getFolderIsNotFound() throws IOException {
+        URI folder = URI.create("/" + IdUtils.create() + "/");
+        storageInterface.createDirectory(TenantService.MAIN_TENANT, null, folder);
+
+        assertTimeoutPreemptively(
+            Duration.ofSeconds(30),
+            () -> assertThrows(FileNotFoundException.class, () -> storageInterface.get(TenantService.MAIN_TENANT, null, folder))
+        );
+    }
+
+    @Test
+    void moveFolderWithEmptySubFolder() throws IOException {
+        String sourcePrefix = IdUtils.create();
+        String targetPrefix = IdUtils.create();
+        URI sourceUri = URI.create("/" + sourcePrefix + "/");
+        URI targetUri = URI.create("/" + targetPrefix + "/");
+
+        storageInterface.put(TenantService.MAIN_TENANT, null, URI.create("/" + sourcePrefix + "/file.txt"), new ByteArrayInputStream("data".getBytes()));
+        storageInterface.createDirectory(TenantService.MAIN_TENANT, null, URI.create("/" + sourcePrefix + "/empty/"));
+
+        storageInterface.move(TenantService.MAIN_TENANT, null, sourceUri, targetUri);
+
+        var moved = storageInterface.allByPrefix(TenantService.MAIN_TENANT, null, targetUri, true);
+        assertThat(moved.stream().map(URI::getPath).toList(), containsInAnyOrder(
+            "/" + targetPrefix + "/file.txt",
+            "/" + targetPrefix + "/empty/"
+        ));
+        assertThat(
+            storageInterface.getAttributes(TenantService.MAIN_TENANT, null, URI.create("/" + targetPrefix + "/empty/")).getType(),
+            is(FileAttributes.FileType.Directory)
+        );
+        assertThat(storageInterface.allByPrefix(TenantService.MAIN_TENANT, null, sourceUri, true), is(empty()));
+        assertThrows(FileNotFoundException.class, () -> storageInterface.getAttributes(TenantService.MAIN_TENANT, null, sourceUri));
+    }
+
+    @Test
     void s3FilesCompatibleModeEnablesBucketVersioning() throws IOException {
         S3Storage plain = S3Storage.builder()
             .accessKey(localstack.getAccessKey())
@@ -129,7 +169,12 @@ class S3StorageTest extends StorageTestSuite {
             .path("kestra")
             .s3FilesCompatible(false)
             .build();
-        plain.init(); plain.createBucket();
+        plain.init();
+        try {
+            plain.createBucket();
+        } catch (IOException ignored) {
+            // the bucket already exists
+        }
 
         S3Storage compat = S3Storage.builder()
             .accessKey(localstack.getAccessKey())
