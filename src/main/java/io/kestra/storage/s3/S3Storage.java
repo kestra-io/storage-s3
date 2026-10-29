@@ -25,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
 
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.storages.FileAttributes;
@@ -49,7 +50,6 @@ import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.Download;
 import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
 import software.amazon.awssdk.transfer.s3.model.UploadRequest;
-import software.amazon.awssdk.utils.builder.SdkBuilder;
 
 import static io.kestra.core.utils.Rethrow.throwFunction;
 
@@ -129,6 +129,10 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private boolean exists(String path) {
+        if (path.endsWith("/")) {
+            // a listing is used instead of a HEAD on the marker, as some S3-compatible servers keep answering 200 on a deleted folder marker
+            return firstObjectUnder(path).isPresent();
+        }
         try {
             HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
                 .bucket(this.getBucket())
@@ -175,7 +179,7 @@ public class S3Storage implements S3Config, StorageInterface {
     private StorageObject getWithMetadata(String path) throws IOException {
         // a folder is never a readable file, and some S3-compatible servers answer a GET on it with a never-ending download
         if (path.endsWith("/")) {
-            throw new FileNotFoundException();
+            throw new FileNotFoundException(path + " (Not Found)");
         }
 
         try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
@@ -328,26 +332,26 @@ public class S3Storage implements S3Config, StorageInterface {
         }
     }
 
+    private Optional<S3Object> firstObjectUnder(String directoryPath) {
+        return s3Client.listObjectsV2(
+            ListObjectsV2Request.builder()
+                .bucket(this.getBucket())
+                .prefix(directoryPath)
+                .maxKeys(1)
+                .build()
+        ).contents().stream().findFirst();
+    }
+
     // A listing is used instead of a HEAD on the marker as some S3-compatible servers disagree with AWS on HEAD for folders.
     private FileAttributes getDirectoryAttributes(String directoryPath) throws IOException {
         try {
-            var response = s3Client.listObjectsV2(
-                ListObjectsV2Request.builder()
-                    .bucket(this.getBucket())
-                    .prefix(directoryPath)
-                    .maxKeys(1)
-                    .build()
-            );
-            if (response.contents().isEmpty()) {
-                throw new FileNotFoundException();
-            }
+            var first = firstObjectUnder(directoryPath)
+                .orElseThrow(() -> new FileNotFoundException(directoryPath + " (Not Found)"));
             return S3FileAttributes.builder()
                 .fileName(Optional.ofNullable(Path.of(directoryPath).getFileName()).map(Path::toString).orElse("/"))
-                .lastModified(response.contents().getFirst().lastModified())
+                .lastModified(first.lastModified())
                 .isDirectory(true)
                 .build();
-        } catch (NoSuchKeyException exception) {
-            throw new FileNotFoundException();
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
@@ -611,11 +615,14 @@ public class S3Storage implements S3Config, StorageInterface {
         try {
             FileAttributes attributes = getAttributes(tenantId, namespace, from);
             if (attributes.getType() == FileAttributes.FileType.Directory) {
+                // without the trailing slash, a sibling sharing the name prefix (level1 and level12.yml) would be moved as well
+                var sourcePrefix = source.endsWith("/") ? source : source + "/";
+                var destPrefix = dest.endsWith("/") ? dest : dest + "/";
                 String continuationToken = null;
                 do {
                     ListObjectsV2Request.Builder listRequestBuilder = ListObjectsV2Request.builder()
                         .bucket(this.getBucket())
-                        .prefix(source);
+                        .prefix(sourcePrefix);
                     if (continuationToken != null) {
                         listRequestBuilder.continuationToken(continuationToken);
                     }
@@ -629,7 +636,7 @@ public class S3Storage implements S3Config, StorageInterface {
                     }
 
                     for (S3Object object : objects) {
-                        String newKey = dest + object.key().substring(source.length());
+                        String newKey = destPrefix + object.key().substring(sourcePrefix.length());
                         move(object.key(), newKey);
                     }
 
@@ -674,38 +681,43 @@ public class S3Storage implements S3Config, StorageInterface {
         if (s3FilesCompatible) {
             return deleteByPrefixVersioned(tenantId, path);
         }
-        ListObjectsRequest listRequest = ListObjectsRequest.builder()
-            .bucket(this.getBucket())
-            .prefix(path)
-            .build();
-        ListObjectsResponse objectListing = s3Client.listObjects(listRequest);
-
-        @SuppressWarnings("unchecked")
-        List<S3Object> s3Objects = objectListing.getValueForField("Contents", List.class).get();
-
-        List<ObjectIdentifier> keys = s3Objects.stream()
-            .map(S3Object::key)
-            .map(ObjectIdentifier.builder()::key)
-            .map(SdkBuilder::build)
-            .toList();
-
-        DeleteObjectsRequest deleteRequest = DeleteObjectsRequest.builder()
-            .bucket(this.getBucket())
-            .delete(builder -> builder.objects(keys))
-            .build();
-
-        if (keys.isEmpty()) {
-            return new ArrayList<>();
-        }
-
+        var deleted = new ArrayList<URI>();
         try {
-            DeleteObjectsResponse result = s3Client.deleteObjects(deleteRequest);
+            String continuationToken = null;
+            do {
+                var listRequest = ListObjectsV2Request.builder()
+                    .bucket(this.getBucket())
+                    .prefix(path);
+                if (continuationToken != null) {
+                    listRequest.continuationToken(continuationToken);
+                }
 
-            return result.deleted().stream()
-                .map(DeletedObject::key)
-                .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
-                .map(k -> createUri(removeTenant(tenantId, k)))
-                .toList();
+                var listResponse = s3Client.listObjectsV2(listRequest.build());
+                continuationToken = listResponse.isTruncated() ? listResponse.nextContinuationToken() : null;
+
+                var keys = listResponse.contents().stream()
+                    .map(S3Object::key)
+                    .map(key -> ObjectIdentifier.builder().key(key).build())
+                    .toList();
+
+                // DeleteObjects is limited to 1000 keys per call
+                for (var batch : Lists.partition(keys, S3_MAX_DELETE_BATCH_SIZE)) {
+                    var result = s3Client.deleteObjects(
+                        DeleteObjectsRequest.builder()
+                            .bucket(this.getBucket())
+                            .delete(builder -> builder.objects(batch))
+                            .build()
+                    );
+
+                    result.deleted().stream()
+                        .map(DeletedObject::key)
+                        .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
+                        .map(k -> createUri(removeTenant(tenantId, k)))
+                        .forEach(deleted::add);
+                }
+            } while (continuationToken != null);
+
+            return deleted;
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }

@@ -24,7 +24,9 @@ public class S3FileAttributes implements FileAttributes {
     public S3FileAttributes(String fileName, @Nullable HeadObjectResponse head, @Nullable Instant lastModified, boolean isDirectory) {
         this.fileName = fileName;
         this.head = head;
-        this.lastModified = head != null ? head.lastModified() : lastModified;
+        var resolved = head != null ? head.lastModified() : lastModified;
+        // some non-standard S3-compatible servers omit LastModified
+        this.lastModified = resolved != null ? resolved : Instant.EPOCH;
         this.isDirectory = isDirectory;
 
         this.metadata = head != null ? MetadataUtils.toRetrievedMetadata(head.metadata()) : Map.of();
