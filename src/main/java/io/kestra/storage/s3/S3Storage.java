@@ -25,7 +25,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Lists;
 
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.storages.FileAttributes;
@@ -701,7 +700,8 @@ public class S3Storage implements S3Config, StorageInterface {
                     .toList();
 
                 // DeleteObjects is limited to 1000 keys per call
-                for (var batch : Lists.partition(keys, S3_MAX_DELETE_BATCH_SIZE)) {
+                for (int from = 0; from < keys.size(); from += S3_MAX_DELETE_BATCH_SIZE) {
+                    var batch = keys.subList(from, Math.min(from + S3_MAX_DELETE_BATCH_SIZE, keys.size()));
                     var result = s3Client.deleteObjects(
                         DeleteObjectsRequest.builder()
                             .bucket(this.getBucket())
