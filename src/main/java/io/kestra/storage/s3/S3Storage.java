@@ -331,6 +331,12 @@ public class S3Storage implements S3Config, StorageInterface {
         }
     }
 
+    // A listing is used instead of a HEAD, as some S3-compatible servers keep answering 200 on a deleted folder marker.
+    // The marker sorts first among the keys sharing its prefix, so it is the first result if it exists.
+    private boolean markerExists(String marker) {
+        return firstObjectUnder(marker).map(o -> o.key().equals(marker)).orElse(false);
+    }
+
     private Optional<S3Object> firstObjectUnder(String directoryPath) {
         return s3Client.listObjectsV2(
             ListObjectsV2Request.builder()
@@ -585,8 +591,9 @@ public class S3Storage implements S3Config, StorageInterface {
             path = path.substring(0, path.lastIndexOf("/") + 1);
         }
 
-        // check if it exists before creating it
-        if (exists(path)) {
+        // Folder markers are what makes a folder visible in a non-recursive listing, and folders written by external tools
+        // (mc mirror, aws s3 sync) have none: check the marker itself, not whether something is under the folder.
+        if (markerExists(path)) {
             return;
         }
 

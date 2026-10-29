@@ -275,4 +275,41 @@ abstract class AbstractS3StorageTest extends StorageTestSuite {
             assertFalse(storage.exists(TenantService.MAIN_TENANT, null, folder));
         });
     }
+
+    @Test
+    void putCreatesTheMissingFolderMarkersOfAFolderWrittenByAnExternalTool() throws Exception {
+        forEachStorage(storage ->
+        {
+            String id = IdUtils.create();
+            var root = uri("/" + id + "/");
+
+            // written straight through the S3 client, as mc mirror or aws s3 sync would: no folder markers
+            storage.getS3ClientForTest().putObject(
+                PutObjectRequest.builder()
+                    .bucket(BUCKET)
+                    .key(storage.getPath(TenantService.MAIN_TENANT, uri("/" + id + "/ext/sub/file.txt")))
+                    .build(),
+                RequestBody.fromString("external")
+            );
+
+            assertThat(fileNames(storage.list(TenantService.MAIN_TENANT, null, root)), not(hasItem("ext")));
+
+            putFile(storage, "/" + id + "/ext/sub/new.txt");
+
+            var listed = storage.list(TenantService.MAIN_TENANT, null, root);
+            assertThat(fileNames(listed), hasItem("ext"));
+            assertThat(
+                listed.stream().filter(f -> f.getFileName().equals("ext")).findFirst().orElseThrow().getType(),
+                is(FileAttributes.FileType.Directory)
+            );
+            assertThat(fileNames(storage.list(TenantService.MAIN_TENANT, null, uri("/" + id + "/ext/"))), hasItem("sub"));
+            try (var in = storage.get(TenantService.MAIN_TENANT, null, uri("/" + id + "/ext/sub/file.txt"))) {
+                assertThat(new String(in.readAllBytes()), is("external"));
+            }
+        });
+    }
+
+    private static java.util.List<String> fileNames(java.util.List<FileAttributes> attributes) {
+        return attributes.stream().map(FileAttributes::getFileName).toList();
+    }
 }
