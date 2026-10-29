@@ -99,10 +99,12 @@ class SeaweedFSS3StorageTest extends StorageTestSuite {
         storageInterface.move(TenantService.MAIN_TENANT, null, sourceUri, targetUri);
 
         var moved = storageInterface.allByPrefix(TenantService.MAIN_TENANT, null, targetUri, true);
-        assertThat(moved.stream().map(URI::getPath).toList(), containsInAnyOrder(
-            "/" + targetPrefix + "/file.txt",
-            "/" + targetPrefix + "/empty/"
-        ));
+        assertThat(
+            moved.stream().map(URI::getPath).toList(), containsInAnyOrder(
+                "/" + targetPrefix + "/file.txt",
+                "/" + targetPrefix + "/empty/"
+            )
+        );
         assertThat(
             storageInterface.getAttributes(TenantService.MAIN_TENANT, null, URI.create("/" + targetPrefix + "/empty/")).getType(),
             is(FileAttributes.FileType.Directory)

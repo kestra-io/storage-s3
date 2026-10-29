@@ -11,8 +11,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -48,7 +48,6 @@ import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.Download;
 import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
-import software.amazon.awssdk.transfer.s3.model.Upload;
 import software.amazon.awssdk.transfer.s3.model.UploadRequest;
 import software.amazon.awssdk.utils.builder.SdkBuilder;
 
@@ -332,11 +331,13 @@ public class S3Storage implements S3Config, StorageInterface {
     // A listing is used instead of a HEAD on the marker as some S3-compatible servers disagree with AWS on HEAD for folders.
     private FileAttributes getDirectoryAttributes(String directoryPath) throws IOException {
         try {
-            var response = s3Client.listObjectsV2(ListObjectsV2Request.builder()
-                .bucket(this.getBucket())
-                .prefix(directoryPath)
-                .maxKeys(1)
-                .build());
+            var response = s3Client.listObjectsV2(
+                ListObjectsV2Request.builder()
+                    .bucket(this.getBucket())
+                    .prefix(directoryPath)
+                    .maxKeys(1)
+                    .build()
+            );
             if (response.contents().isEmpty()) {
                 throw new FileNotFoundException();
             }
@@ -476,12 +477,16 @@ public class S3Storage implements S3Config, StorageInterface {
 
     private void enableBucketVersioning() throws IOException {
         try {
-            s3Client.putBucketVersioning(PutBucketVersioningRequest.builder()
-                .bucket(getBucket())
-                .versioningConfiguration(VersioningConfiguration.builder()
-                    .status(BucketVersioningStatus.ENABLED)
-                    .build())
-                .build());
+            s3Client.putBucketVersioning(
+                PutBucketVersioningRequest.builder()
+                    .bucket(getBucket())
+                    .versioningConfiguration(
+                        VersioningConfiguration.builder()
+                            .status(BucketVersioningStatus.ENABLED)
+                            .build()
+                    )
+                    .build()
+            );
         } catch (AwsServiceException e) {
             throw new IOException("Failed to enable versioning for S3 Files compatibility", e);
         }
@@ -498,8 +503,10 @@ public class S3Storage implements S3Config, StorageInterface {
                     .bucket(this.getBucket())
                     .prefix(key);
 
-                if (keyMarker != null) builder.keyMarker(keyMarker);
-                if (versionIdMarker != null) builder.versionIdMarker(versionIdMarker);
+                if (keyMarker != null)
+                    builder.keyMarker(keyMarker);
+                if (versionIdMarker != null)
+                    builder.versionIdMarker(versionIdMarker);
 
                 ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
                 keyMarker = response.nextKeyMarker();
@@ -533,11 +540,14 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private void flushVersionBatch(List<ObjectIdentifier> batch) {
-        if (batch.isEmpty()) return;
-        s3Client.deleteObjects(DeleteObjectsRequest.builder()
-            .bucket(this.getBucket())
-            .delete(d -> d.objects(batch))
-            .build());
+        if (batch.isEmpty())
+            return;
+        s3Client.deleteObjects(
+            DeleteObjectsRequest.builder()
+                .bucket(this.getBucket())
+                .delete(d -> d.objects(batch))
+                .build()
+        );
         batch.clear();
     }
 
@@ -714,8 +724,10 @@ public class S3Storage implements S3Config, StorageInterface {
                     .bucket(this.getBucket())
                     .prefix(path);
 
-                if (keyMarker != null) builder.keyMarker(keyMarker);
-                if (versionIdMarker != null) builder.versionIdMarker(versionIdMarker);
+                if (keyMarker != null)
+                    builder.keyMarker(keyMarker);
+                if (versionIdMarker != null)
+                    builder.versionIdMarker(versionIdMarker);
 
                 ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
                 keyMarker = response.nextKeyMarker();

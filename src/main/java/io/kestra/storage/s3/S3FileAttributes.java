@@ -6,7 +6,6 @@ import java.util.Map;
 import io.kestra.core.storages.FileAttributes;
 
 import jakarta.annotation.Nullable;
-
 import lombok.Builder;
 import lombok.Value;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
