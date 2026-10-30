@@ -11,11 +11,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.commons.lang3.Strings;
@@ -47,9 +48,7 @@ import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.Download;
 import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
-import software.amazon.awssdk.transfer.s3.model.Upload;
 import software.amazon.awssdk.transfer.s3.model.UploadRequest;
-import software.amazon.awssdk.utils.builder.SdkBuilder;
 
 import static io.kestra.core.utils.Rethrow.throwFunction;
 
@@ -66,6 +65,7 @@ public class S3Storage implements S3Config, StorageInterface {
     private static final Pattern METADATA_KEY_WORD_SEPARATOR = Pattern.compile("_([a-z])");
     private static final Pattern UPPERCASE = Pattern.compile("([A-Z])");
     private static final int S3_MAX_DELETE_BATCH_SIZE = 1000;
+    private static final int MAX_REPORTED_DELETE_ERRORS = 5;
 
     @NotEmpty
     private String bucket;
@@ -85,6 +85,12 @@ public class S3Storage implements S3Config, StorageInterface {
     private boolean forcePathStyle;
 
     private boolean s3FilesCompatible;
+
+    /**
+     * Checks folder markers with a LIST instead of a HEAD when writing. Needed by servers such as SeaweedFS that keep answering 200 on a deleted marker,
+     * but a LIST is priced higher than a HEAD on AWS and this check runs on every write.
+     */
+    private boolean listFolderMarkers;
 
     @Builder.Default
     private Duration stsRoleSessionDuration = AWS_MIN_STS_ROLE_SESSION_DURATION;
@@ -130,6 +136,10 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private boolean exists(String path) {
+        if (path.endsWith("/")) {
+            // a listing is used instead of a HEAD on the marker, as some S3-compatible servers keep answering 200 on a deleted folder marker
+            return firstObjectUnder(path).isPresent();
+        }
         try {
             HeadObjectRequest headObjectRequest = HeadObjectRequest.builder()
                 .bucket(this.getBucket())
@@ -174,6 +184,11 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private StorageObject getWithMetadata(String path) throws IOException {
+        // a folder is never a readable file, and some S3-compatible servers answer a GET on it with a never-ending download
+        if (path.endsWith("/")) {
+            throw new FileNotFoundException("%s (Not Found)".formatted(path));
+        }
+
         try (S3TransferManager transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build()) {
             GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(this.getBucket())
@@ -306,13 +321,52 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     private FileAttributes getAttributes(String path) throws IOException {
+        if (path.endsWith("/")) {
+            return getDirectoryAttributes(path);
+        }
         try {
             return getFileAttributes(path);
         } catch (FileNotFoundException e) {
-            if (path.endsWith("/")) {
-                throw e;
-            }
-            return getFileAttributes(path + "/");
+            return getDirectoryAttributes(path + "/");
+        }
+    }
+
+    // With listFolderMarkers, a listing replaces the HEAD as some S3-compatible servers keep answering 200 on a deleted folder marker.
+    private boolean markerExists(String marker) {
+        if (listFolderMarkers) {
+            // the marker sorts first among the keys sharing its prefix, so it is the first result if it exists
+            return firstObjectUnder(marker).map(o -> o.key().equals(marker)).orElse(false);
+        }
+        try {
+            s3Client.headObject(HeadObjectRequest.builder().bucket(this.getBucket()).key(marker).build());
+            return true;
+        } catch (NoSuchKeyException e) {
+            return false;
+        }
+    }
+
+    private Optional<S3Object> firstObjectUnder(String directoryPath) {
+        return s3Client.listObjectsV2(
+            ListObjectsV2Request.builder()
+                .bucket(this.getBucket())
+                .prefix(directoryPath)
+                .maxKeys(1)
+                .build()
+        ).contents().stream().findFirst();
+    }
+
+    // A listing is used instead of a HEAD on the marker, as some S3-compatible servers disagree with AWS on HEAD for folders.
+    private FileAttributes getDirectoryAttributes(String directoryPath) throws IOException {
+        try {
+            var first = firstObjectUnder(directoryPath)
+                .orElseThrow(() -> new FileNotFoundException(directoryPath + " (Not Found)"));
+            return S3FileAttributes.builder()
+                .fileName(Optional.ofNullable(Path.of(directoryPath).getFileName()).map(Path::toString).orElse("/"))
+                .lastModified(first.lastModified())
+                .isDirectory(true)
+                .build();
+        } catch (AwsServiceException exception) {
+            throw new IOException(exception);
         }
     }
 
@@ -425,7 +479,7 @@ public class S3Storage implements S3Config, StorageInterface {
         return deleteSingleObject(path);
     }
 
-    private boolean deleteSingleObject(String path) {
+    private boolean deleteSingleObject(String path) throws IOException {
         if (s3FilesCompatible) {
             return deleteAllVersions(path);
         }
@@ -440,18 +494,22 @@ public class S3Storage implements S3Config, StorageInterface {
 
     private void enableBucketVersioning() throws IOException {
         try {
-            s3Client.putBucketVersioning(PutBucketVersioningRequest.builder()
-                .bucket(getBucket())
-                .versioningConfiguration(VersioningConfiguration.builder()
-                    .status(BucketVersioningStatus.ENABLED)
-                    .build())
-                .build());
+            s3Client.putBucketVersioning(
+                PutBucketVersioningRequest.builder()
+                    .bucket(getBucket())
+                    .versioningConfiguration(
+                        VersioningConfiguration.builder()
+                            .status(BucketVersioningStatus.ENABLED)
+                            .build()
+                    )
+                    .build()
+            );
         } catch (AwsServiceException e) {
             throw new IOException("Failed to enable versioning for S3 Files compatibility", e);
         }
     }
 
-    private boolean deleteAllVersions(String key) {
+    private boolean deleteAllVersions(String key) throws IOException {
         try {
             List<ObjectIdentifier> toDelete = new ArrayList<>();
             String keyMarker = null;
@@ -462,8 +520,12 @@ public class S3Storage implements S3Config, StorageInterface {
                     .bucket(this.getBucket())
                     .prefix(key);
 
-                if (keyMarker != null) builder.keyMarker(keyMarker);
-                if (versionIdMarker != null) builder.versionIdMarker(versionIdMarker);
+                if (keyMarker != null) {
+                    builder.keyMarker(keyMarker);
+                }
+                if (versionIdMarker != null) {
+                    builder.versionIdMarker(versionIdMarker);
+                }
 
                 ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
                 keyMarker = response.nextKeyMarker();
@@ -496,13 +558,32 @@ public class S3Storage implements S3Config, StorageInterface {
         }
     }
 
-    private void flushVersionBatch(List<ObjectIdentifier> batch) {
-        if (batch.isEmpty()) return;
-        s3Client.deleteObjects(DeleteObjectsRequest.builder()
-            .bucket(this.getBucket())
-            .delete(d -> d.objects(batch))
-            .build());
+    private void flushVersionBatch(List<ObjectIdentifier> batch) throws IOException {
+        if (batch.isEmpty()) {
+            return;
+        }
+        var result = s3Client.deleteObjects(
+            DeleteObjectsRequest.builder()
+                .bucket(this.getBucket())
+                .delete(d -> d.objects(batch))
+                .build()
+        );
+        checkDeleteErrors(result);
         batch.clear();
+    }
+
+    // DeleteObjects answers 200 even when some keys failed (access denied, object lock), the failures are only in the body
+    private static void checkDeleteErrors(DeleteObjectsResponse result) throws IOException {
+        if (result.errors().isEmpty()) {
+            return;
+        }
+        var errors = result.errors();
+        var details = errors.stream()
+            .limit(MAX_REPORTED_DELETE_ERRORS)
+            .map(e -> "%s (%s)".formatted(e.key(), e.code()))
+            .collect(Collectors.joining(", "));
+        var more = errors.size() > MAX_REPORTED_DELETE_ERRORS ? " and %d more".formatted(errors.size() - MAX_REPORTED_DELETE_ERRORS) : "";
+        throw new IOException("Failed to delete %d object(s): %s%s".formatted(errors.size(), details, more));
     }
 
     @Override
@@ -536,8 +617,8 @@ public class S3Storage implements S3Config, StorageInterface {
             path = path.substring(0, path.lastIndexOf("/") + 1);
         }
 
-        // check if it exists before creating it
-        if (exists(path)) {
+        // folders written by external tools (mc mirror, aws s3 sync) have no marker, so check the marker itself, not what is under the folder
+        if (markerExists(path)) {
             return;
         }
 
@@ -565,11 +646,14 @@ public class S3Storage implements S3Config, StorageInterface {
         try {
             FileAttributes attributes = getAttributes(tenantId, namespace, from);
             if (attributes.getType() == FileAttributes.FileType.Directory) {
+                // without the trailing slash, a sibling sharing the name prefix (level1 and level12.yml) would be moved as well
+                var sourcePrefix = source.endsWith("/") ? source : source + "/";
+                var destPrefix = dest.endsWith("/") ? dest : dest + "/";
                 String continuationToken = null;
                 do {
                     ListObjectsV2Request.Builder listRequestBuilder = ListObjectsV2Request.builder()
                         .bucket(this.getBucket())
-                        .prefix(source);
+                        .prefix(sourcePrefix);
                     if (continuationToken != null) {
                         listRequestBuilder.continuationToken(continuationToken);
                     }
@@ -583,7 +667,7 @@ public class S3Storage implements S3Config, StorageInterface {
                     }
 
                     for (S3Object object : objects) {
-                        String newKey = dest + object.key().substring(source.length());
+                        String newKey = destPrefix + object.key().substring(sourcePrefix.length());
                         move(object.key(), newKey);
                     }
 
@@ -598,14 +682,22 @@ public class S3Storage implements S3Config, StorageInterface {
         }
     }
 
-    private void move(String oldKey, String newKey) {
-        CopyObjectRequest copyRequest = CopyObjectRequest.builder()
-            .sourceBucket(this.getBucket())
-            .sourceKey(oldKey)
-            .destinationBucket(this.getBucket())
-            .destinationKey(newKey)
-            .build();
-        s3Client.copyObject(copyRequest);
+    private void move(String oldKey, String newKey) throws IOException {
+        if (oldKey.endsWith("/")) {
+            // some S3-compatible servers fail to copy a folder marker, so it is recreated instead
+            s3Client.putObject(
+                PutObjectRequest.builder().bucket(this.getBucket()).key(newKey).build(),
+                RequestBody.empty()
+            );
+        } else {
+            CopyObjectRequest copyRequest = CopyObjectRequest.builder()
+                .sourceBucket(this.getBucket())
+                .sourceKey(oldKey)
+                .destinationBucket(this.getBucket())
+                .destinationKey(newKey)
+                .build();
+            s3Client.copyObject(copyRequest);
+        }
 
         deleteSingleObject(oldKey);
     }
@@ -620,38 +712,46 @@ public class S3Storage implements S3Config, StorageInterface {
         if (s3FilesCompatible) {
             return deleteByPrefixVersioned(tenantId, path);
         }
-        ListObjectsRequest listRequest = ListObjectsRequest.builder()
-            .bucket(this.getBucket())
-            .prefix(path)
-            .build();
-        ListObjectsResponse objectListing = s3Client.listObjects(listRequest);
-
-        @SuppressWarnings("unchecked")
-        List<S3Object> s3Objects = objectListing.getValueForField("Contents", List.class).get();
-
-        List<ObjectIdentifier> keys = s3Objects.stream()
-            .map(S3Object::key)
-            .map(ObjectIdentifier.builder()::key)
-            .map(SdkBuilder::build)
-            .toList();
-
-        DeleteObjectsRequest deleteRequest = DeleteObjectsRequest.builder()
-            .bucket(this.getBucket())
-            .delete(builder -> builder.objects(keys))
-            .build();
-
-        if (keys.isEmpty()) {
-            return new ArrayList<>();
-        }
-
+        var deleted = new ArrayList<URI>();
         try {
-            DeleteObjectsResponse result = s3Client.deleteObjects(deleteRequest);
+            String continuationToken = null;
+            do {
+                var listRequest = ListObjectsV2Request.builder()
+                    .bucket(this.getBucket())
+                    .prefix(path)
+                    // DeleteObjects is limited to 1000 keys per call, so one page is one batch
+                    .maxKeys(S3_MAX_DELETE_BATCH_SIZE);
+                if (continuationToken != null) {
+                    listRequest.continuationToken(continuationToken);
+                }
 
-            return result.deleted().stream()
-                .map(DeletedObject::key)
-                .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
-                .map(k -> createUri(removeTenant(tenantId, k)))
-                .toList();
+                var listResponse = s3Client.listObjectsV2(listRequest.build());
+                continuationToken = listResponse.isTruncated() ? listResponse.nextContinuationToken() : null;
+
+                var keys = listResponse.contents().stream()
+                    .map(S3Object::key)
+                    .map(key -> ObjectIdentifier.builder().key(key).build())
+                    .toList();
+
+                if (keys.isEmpty()) {
+                    continue;
+                }
+                var result = s3Client.deleteObjects(
+                    DeleteObjectsRequest.builder()
+                        .bucket(this.getBucket())
+                        .delete(builder -> builder.objects(keys))
+                        .build()
+                );
+                checkDeleteErrors(result);
+
+                result.deleted().stream()
+                    .map(DeletedObject::key)
+                    .map(k -> (k.endsWith("/")) ? k.substring(0, k.length() - 1) : k)
+                    .map(k -> createUri(removeTenant(tenantId, k)))
+                    .forEach(deleted::add);
+            } while (continuationToken != null);
+
+            return deleted;
         } catch (AwsServiceException exception) {
             throw new IOException(exception);
         }
@@ -670,8 +770,12 @@ public class S3Storage implements S3Config, StorageInterface {
                     .bucket(this.getBucket())
                     .prefix(path);
 
-                if (keyMarker != null) builder.keyMarker(keyMarker);
-                if (versionIdMarker != null) builder.versionIdMarker(versionIdMarker);
+                if (keyMarker != null) {
+                    builder.keyMarker(keyMarker);
+                }
+                if (versionIdMarker != null) {
+                    builder.versionIdMarker(versionIdMarker);
+                }
 
                 ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
                 keyMarker = response.nextKeyMarker();
