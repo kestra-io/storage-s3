@@ -40,7 +40,9 @@ class SeaweedFSS3StorageTest extends AbstractS3StorageTest {
             .bucket(BUCKET)
             .region("us-east-1")
             .endpoint("http://" + seaweedfs.getHost() + ":" + seaweedfs.getMappedPort(S3_PORT))
-            .forcePathStyle(true);
+            .forcePathStyle(true)
+            // SeaweedFS keeps answering 200 on a deleted folder marker
+            .listFolderMarkers(true);
     }
 
     @AfterAll
