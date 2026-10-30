@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import io.kestra.core.docs.JsonSchemaGenerator;
 import io.kestra.core.junit.annotations.KestraTest;
+import io.kestra.core.storages.StorageInterface;
 
 import jakarta.inject.Inject;
 
@@ -21,10 +22,9 @@ class S3StorageSchemaTest {
     @SuppressWarnings("unchecked")
     @Test
     void schema() {
-        var schema = jsonSchemaGenerator.schemas(S3Storage.class, false);
+        var schema = jsonSchemaGenerator.properties(StorageInterface.class, S3Storage.class);
 
-        var definition = (Map<String, Object>) ((Map<String, Object>) schema.get("definitions")).get(S3Storage.class.getName());
-        var properties = (Map<String, Object>) definition.get("properties");
+        var properties = (Map<String, Object>) schema.get("properties");
         assertThat(properties, not(hasKey("s3Client")));
         assertThat(properties, not(hasKey("s3AsyncClient")));
     }
