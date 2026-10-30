@@ -29,6 +29,7 @@ import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.storages.StorageObject;
 
+import io.swagger.v3.oas.annotations.Hidden;
 import jakarta.annotation.Nullable;
 import jakarta.validation.constraints.NotEmpty;
 import lombok.*;
@@ -88,9 +89,11 @@ public class S3Storage implements S3Config, StorageInterface {
     @Builder.Default
     private Duration stsRoleSessionDuration = AWS_MIN_STS_ROLE_SESSION_DURATION;
 
+    @Hidden
     @Getter(AccessLevel.PRIVATE)
     private S3Client s3Client;
 
+    @Hidden
     @Getter(AccessLevel.PRIVATE)
     private S3AsyncClient s3AsyncClient;
 
