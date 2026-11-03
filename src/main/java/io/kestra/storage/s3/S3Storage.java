@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -41,6 +42,7 @@ import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.crt.CRT;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -104,12 +106,32 @@ public class S3Storage implements S3Config, StorageInterface {
     private S3AsyncClient s3AsyncClient;
 
     /**
+     * Whether this storage holds a reference on the AWS CRT shutdown (see {@link CRT#acquireShutdownRef()}).
+     * It makes sure the reference is released exactly once, even if {@link #close()} is called several times.
+     */
+    @Getter(AccessLevel.NONE)
+    private final AtomicBoolean crtShutdownRefAcquired = new AtomicBoolean(false);
+
+    /**
      * {@inheritDoc}
      **/
     @Override
     public void init() throws IOException {
         this.s3Client = S3ClientFactory.getS3Client(this);
-        this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
+
+        // The CRT registers its own JVM shutdown hook, which starts shutting it down as soon as SIGTERM is received.
+        // Without a reference of our own, any upload started by a task while the worker is draining would hang
+        // until the termination grace period, as nothing is left to complete it.
+        // Holding a reference keeps the CRT alive until close() is called, once the worker has finished draining.
+        CRT.acquireShutdownRef();
+        this.crtShutdownRefAcquired.set(true);
+        try {
+            this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
+        } catch (RuntimeException e) {
+            releaseCrtShutdownRef();
+            throw e;
+        }
+
         if (s3FilesCompatible) {
             enableBucketVersioning();
         }
@@ -836,6 +858,15 @@ public class S3Storage implements S3Config, StorageInterface {
             } catch (Exception e) {
                 LOG.warn("Failed to close S3Storage", e);
             }
+        }
+
+        // Released last, so the CRT can only start shutting down once the client using it is closed.
+        releaseCrtShutdownRef();
+    }
+
+    private void releaseCrtShutdownRef() {
+        if (this.crtShutdownRefAcquired.compareAndSet(true, false)) {
+            CRT.releaseShutdownRef();
         }
     }
 }
