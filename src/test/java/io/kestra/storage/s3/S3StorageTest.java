@@ -2,6 +2,7 @@ package io.kestra.storage.s3;
 
 import java.io.*;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.localstack.LocalStackContainer;
@@ -130,5 +131,41 @@ class S3StorageTest extends AbstractS3StorageTest {
             .getBucketVersioning(GetBucketVersioningRequest.builder().bucket(BUCKET).build());
         assertThat(resp.status(), is(BucketVersioningStatus.ENABLED));
         compat.close();
+    }
+
+    @Test
+    void initIsIdempotentAndCloseCanBeRepeated() throws IOException {
+        var storage = storageBuilder()
+            .path(PATH)
+            .build();
+
+        try {
+            storage.init();
+            var firstClient = storage.getS3ClientForTest();
+
+            storage.init();
+
+            assertThat(storage.getS3ClientForTest(), sameInstance(firstClient));
+            assertPutAndGetWorks(storage);
+
+            storage.close();
+            storage.close();
+
+            storage.init();
+            assertThat(storage.getS3ClientForTest(), not(sameInstance(firstClient)));
+            assertPutAndGetWorks(storage);
+        } finally {
+            storage.close();
+        }
+    }
+
+    private void assertPutAndGetWorks(S3Storage storage) throws IOException {
+        URI uri = URI.create("/" + IdUtils.create() + "/lifecycle.txt");
+        byte[] expected = "storage lifecycle round trip".getBytes(StandardCharsets.UTF_8);
+        storage.put(TenantService.MAIN_TENANT, null, uri, new ByteArrayInputStream(expected));
+
+        try (InputStream input = storage.get(TenantService.MAIN_TENANT, null, uri)) {
+            assertThat(input.readAllBytes(), equalTo(expected));
+        }
     }
 }
