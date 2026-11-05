@@ -110,6 +110,9 @@ public class S3Storage implements S3Config, StorageInterface {
      **/
     @Override
     public void init() throws IOException {
+        if (crtShutDownRefAcquired)
+          return;  
+
         CRT.acquireShutdownRef();
         crtShutDownRefAcquired = true;
         
