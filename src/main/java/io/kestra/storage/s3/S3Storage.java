@@ -42,6 +42,7 @@ import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.crt.CRT;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
@@ -85,6 +86,7 @@ public class S3Storage implements S3Config, StorageInterface {
     private boolean forcePathStyle;
 
     private boolean s3FilesCompatible;
+    private boolean crtShutDownRefAcquired;
 
     /**
      * Checks folder markers with a LIST instead of a HEAD when writing. Needed by servers such as SeaweedFS that keep answering 200 on a deleted marker,
@@ -108,10 +110,18 @@ public class S3Storage implements S3Config, StorageInterface {
      **/
     @Override
     public void init() throws IOException {
-        this.s3Client = S3ClientFactory.getS3Client(this);
-        this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
-        if (s3FilesCompatible) {
-            enableBucketVersioning();
+        CRT.acquireShutdownRef();
+        crtShutDownRefAcquired = true;
+        
+        try {
+            this.s3Client = S3ClientFactory.getS3Client(this);
+            this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
+            if (s3FilesCompatible) {
+                enableBucketVersioning();
+            }
+          } catch (Exception e) {
+            close();
+            throw e;
         }
     }
 
@@ -822,19 +832,26 @@ public class S3Storage implements S3Config, StorageInterface {
 
     @Override
     public void close() {
-        if (this.s3Client != null) {
-            try {
-                this.s3Client.close();
-            } catch (Exception e) {
-                LOG.warn("Failed to close S3Storage", e);
+        try {
+            if (this.s3Client != null) {
+                try {
+                    this.s3Client.close();
+                } catch (Exception e) {
+                    LOG.warn("Failed to close S3Storage", e);
+                }
             }
-        }
-
-        if (this.s3AsyncClient != null) {
-            try {
-                this.s3AsyncClient.close();
-            } catch (Exception e) {
-                LOG.warn("Failed to close S3Storage", e);
+    
+            if (this.s3AsyncClient != null) {
+                try {
+                    this.s3AsyncClient.close();
+                } catch (Exception e) {
+                    LOG.warn("Failed to close S3Storage", e);
+                }
+            }
+        } finally {
+            if(crtShutDownRefAcquired) {
+                CRT.releaseShutdownRef();
+                crtShutDownRefAcquired = false;
             }
         }
     }
