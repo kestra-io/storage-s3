@@ -16,6 +16,7 @@ import software.amazon.awssdk.services.s3.model.*;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.testcontainers.containers.localstack.LocalStackContainer.Service.S3;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -153,6 +154,28 @@ class S3StorageTest extends AbstractS3StorageTest {
 
             storage.init();
             assertThat(storage.getS3ClientForTest(), not(sameInstance(firstClient)));
+            assertPutAndGetWorks(storage);
+        } finally {
+            storage.close();
+        }
+    }
+
+    @Test
+    void failedInitCanBeClosedRepeatedlyWithoutAffectingOtherStorage() throws IOException {
+        var failedStorage = S3Storage.builder()
+            .bucket(BUCKET)
+            .endpoint("invalid endpoint")
+            .build();
+
+        assertThrows(IllegalArgumentException.class, failedStorage::init);
+        failedStorage.close();
+        failedStorage.close();
+
+        var storage = storageBuilder()
+            .path(PATH)
+            .build();
+        try {
+            storage.init();
             assertPutAndGetWorks(storage);
         } finally {
             storage.close();

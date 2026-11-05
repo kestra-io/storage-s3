@@ -109,20 +109,21 @@ public class S3Storage implements S3Config, StorageInterface {
      * {@inheritDoc}
      **/
     @Override
-    public void init() throws IOException {
-        if (crtShutDownRefAcquired)
-          return;  
+    public synchronized void init() throws IOException {
+        if (crtShutDownRefAcquired) {
+            return;
+        }
 
         CRT.acquireShutdownRef();
         crtShutDownRefAcquired = true;
-        
+
         try {
             this.s3Client = S3ClientFactory.getS3Client(this);
             this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
             if (s3FilesCompatible) {
                 enableBucketVersioning();
             }
-          } catch (Exception e) {
+        } catch (Exception e) {
             close();
             throw e;
         }
@@ -834,7 +835,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         try {
             if (this.s3Client != null) {
                 try {
@@ -843,7 +844,7 @@ public class S3Storage implements S3Config, StorageInterface {
                     LOG.warn("Failed to close S3Storage", e);
                 }
             }
-    
+
             if (this.s3AsyncClient != null) {
                 try {
                     this.s3AsyncClient.close();
@@ -852,7 +853,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 }
             }
         } finally {
-            if(crtShutDownRefAcquired) {
+            if (crtShutDownRefAcquired) {
                 CRT.releaseShutdownRef();
                 crtShutDownRefAcquired = false;
             }
