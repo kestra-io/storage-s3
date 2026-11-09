@@ -14,7 +14,9 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.S3CrtAsyncClientBuilder;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.sts.StsClientBuilder;
 import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider;
@@ -55,6 +57,23 @@ public final class S3ClientFactory {
 
         return clientBuilder
             .forcePathStyle(s3Config.isForcePathStyle())
+            .credentialsProvider(getCredentials(s3Config))
+            .build();
+    }
+
+    public static S3Presigner getS3Presigner(final S3Config s3Config) {
+        S3Presigner.Builder builder = S3Presigner.builder()
+            .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(s3Config.isForcePathStyle()).build());
+
+        if (s3Config.getEndpoint() != null) {
+            builder.endpointOverride(URI.create(s3Config.getEndpoint()));
+        }
+
+        if (s3Config.getRegion() != null) {
+            builder.region(Region.of(s3Config.getRegion()));
+        }
+
+        return builder
             .credentialsProvider(getCredentials(s3Config))
             .build();
     }

@@ -2,11 +2,17 @@ package io.kestra.storage.s3;
 
 import java.io.*;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import io.kestra.core.storages.PresignRequest;
+import io.kestra.core.storages.PresignedRequest;
 import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
 
@@ -24,7 +30,8 @@ class S3StorageTest extends AbstractS3StorageTest {
     @BeforeAll
     void startLocalstack() {
         localstack = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8.1"))
-            .withServices(S3);
+            .withServices(S3)
+            .withEnv("S3_SKIP_SIGNATURE_VALIDATION", "0");
         // some tests use a real flow with hardcoded configuration, so we have to fix the binding port
         localstack.setPortBindings(java.util.List.of("4566:4566"));
         localstack.start();
@@ -113,6 +120,28 @@ class S3StorageTest extends AbstractS3StorageTest {
         // Check that the original files no longer exist
         var sourceFiles = storage.allByPrefix(TenantService.MAIN_TENANT, null, sourceUri, false);
         assertThat("Source directory should be empty after move", sourceFiles, is(empty()));
+    }
+
+    @Test
+    void shouldRefuseAPresignedUploadWhoseBodyIsNotTheSignedLength() throws Exception {
+        var storage = storage(PATH);
+        var uri = URI.create("/" + IdUtils.create() + "/presigned.txt");
+        var put = storage.presign(
+            PresignRequest.builder()
+                .tenantId(TenantService.MAIN_TENANT)
+                .uri(uri)
+                .method(PresignedRequest.Method.PUT)
+                .ttl(Duration.ofMinutes(5))
+                .contentLength(5L)
+                .build()
+        ).orElseThrow();
+
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            var upload = client.send(request(put).PUT(HttpRequest.BodyPublishers.ofString("a longer body")).build(), HttpResponse.BodyHandlers.discarding());
+
+            assertThat(upload.statusCode(), is(403));
+        }
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, uri), is(false));
     }
 
     // only AWS-like servers support bucket versioning, which is why this one is not in the shared tests

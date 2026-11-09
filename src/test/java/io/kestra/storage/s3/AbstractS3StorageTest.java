@@ -4,6 +4,10 @@ import java.io.ByteArrayInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
@@ -14,6 +18,8 @@ import org.junit.jupiter.api.TestInstance;
 
 import io.kestra.core.storage.StorageTestSuite;
 import io.kestra.core.storages.FileAttributes;
+import io.kestra.core.storages.PresignRequest;
+import io.kestra.core.storages.PresignedRequest;
 import io.kestra.core.storages.StorageObject;
 import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
@@ -307,6 +313,55 @@ abstract class AbstractS3StorageTest extends StorageTestSuite {
                 assertThat(new String(in.readAllBytes()), is("external"));
             }
         });
+    }
+
+    @Test
+    void shouldReadAndWriteThroughPresignedRequestsWithoutCredentials() throws Exception {
+        forEachStorage(storage ->
+        {
+            var directory = "/" + IdUtils.create() + "/a";
+            var uri = uri(directory + "/presigned.txt");
+            byte[] body = "hello".getBytes(StandardCharsets.UTF_8);
+
+            try (HttpClient client = HttpClient.newHttpClient()) {
+                var put = storage.presign(
+                    PresignRequest.builder()
+                        .tenantId(TenantService.MAIN_TENANT)
+                        .uri(uri)
+                        .method(PresignedRequest.Method.PUT)
+                        .metadata(Map.of("expirationDate", "2030-01-01T00:00:00Z"))
+                        .ttl(Duration.ofMinutes(5))
+                        .contentLength((long) body.length)
+                        .build()
+                ).orElseThrow();
+                var upload = client.send(request(put).PUT(HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofString());
+                assertThat(upload.body(), upload.statusCode(), is(200));
+
+                var stored = storage.getWithMetadata(TenantService.MAIN_TENANT, null, uri);
+                try (var content = stored.inputStream()) {
+                    assertThat(new String(content.readAllBytes(), StandardCharsets.UTF_8), is("hello"));
+                }
+                assertThat(stored.metadata(), hasEntry("expirationDate", "2030-01-01T00:00:00Z"));
+                assertThat(storage.getAttributes(TenantService.MAIN_TENANT, null, uri(directory)).getType(), is(FileAttributes.FileType.Directory));
+
+                var get = storage.presign(
+                    PresignRequest.builder().tenantId(TenantService.MAIN_TENANT).uri(uri).method(PresignedRequest.Method.GET).ttl(Duration.ofMinutes(5)).build()
+                ).orElseThrow();
+                var download = client.send(request(get).GET().build(), HttpResponse.BodyHandlers.ofString());
+                assertThat(download.body(), is("hello"));
+            }
+        });
+    }
+
+    static HttpRequest.Builder request(PresignedRequest presigned) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(presigned.url());
+        presigned.headers().forEach((name, value) ->
+        {
+            if (!"content-length".equalsIgnoreCase(name)) {
+                builder.header(name, value);
+            }
+        });
+        return builder;
     }
 
     private static java.util.List<String> fileNames(java.util.List<FileAttributes> attributes) {
