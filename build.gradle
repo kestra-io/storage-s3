@@ -22,7 +22,7 @@ repositories {
     }
 }
 
-final targetJavaVersion = JavaVersion.VERSION_21
+final targetJavaVersion = JavaVersion.VERSION_25
 
 java {
     sourceCompatibility = targetJavaVersion
@@ -84,8 +84,7 @@ dependencies {
     // test deps needed only for to have a runner
     testImplementation group: "io.kestra", name: "core", version: kestraVersion
     testImplementation group: "io.kestra", name: "tests", version: kestraVersion
-    testImplementation group: "io.kestra", name: "repository-memory", version: kestraVersion
-    testImplementation group: "io.kestra", name: "runner-memory", version: kestraVersion
+    testImplementation group: "io.kestra", name: "jdbc-h2", version: kestraVersion
 
     // test
     testImplementation "org.junit.jupiter:junit-jupiter-engine"

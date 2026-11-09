@@ -8,8 +8,10 @@ import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -27,6 +29,9 @@ import com.google.common.annotations.VisibleForTesting;
 
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.storages.FileAttributes;
+import io.kestra.core.storages.PresignRequest;
+import io.kestra.core.storages.PresignableStorage;
+import io.kestra.core.storages.PresignedRequest;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.storages.StorageObject;
 
@@ -45,6 +50,7 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.Download;
 import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
@@ -60,12 +66,14 @@ import static io.kestra.core.utils.Rethrow.throwFunction;
 @Plugin
 @Plugin.Id("s3")
 @Slf4j
-public class S3Storage implements S3Config, StorageInterface {
+public class S3Storage implements S3Config, StorageInterface, PresignableStorage {
     private static final Logger LOG = LoggerFactory.getLogger(S3Storage.class);
     private static final Pattern METADATA_KEY_WORD_SEPARATOR = Pattern.compile("_([a-z])");
     private static final Pattern UPPERCASE = Pattern.compile("([A-Z])");
     private static final int S3_MAX_DELETE_BATCH_SIZE = 1000;
     private static final int MAX_REPORTED_DELETE_ERRORS = 5;
+    private static final Duration MAX_PRESIGNED_TTL = Duration.ofDays(7);
+    private static final long MAX_SINGLE_PUT_SIZE = 5L * 1024 * 1024 * 1024;
 
     @NotEmpty
     private String bucket;
@@ -103,6 +111,10 @@ public class S3Storage implements S3Config, StorageInterface {
     @Getter(AccessLevel.PRIVATE)
     private S3AsyncClient s3AsyncClient;
 
+    @Hidden
+    @Getter(AccessLevel.PRIVATE)
+    private S3Presigner s3Presigner;
+
     /**
      * {@inheritDoc}
      **/
@@ -110,6 +122,7 @@ public class S3Storage implements S3Config, StorageInterface {
     public void init() throws IOException {
         this.s3Client = S3ClientFactory.getS3Client(this);
         this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
+        this.s3Presigner = S3ClientFactory.getS3Presigner(this);
         if (s3FilesCompatible) {
             enableBucketVersioning();
         }
@@ -612,6 +625,57 @@ public class S3Storage implements S3Config, StorageInterface {
         s3Client.putObject(putRequest, RequestBody.empty());
     }
 
+    /**
+     * Presigns a SigV4 request. A request signed with temporary credentials, such as an assumed role or an instance
+     * profile, stops working when those credentials expire, even before its TTL.
+     */
+    @Override
+    public Optional<PresignedRequest> presign(PresignRequest request) throws IOException {
+        String path = getPath(request.tenantId(), request.uri());
+        Duration ttl = request.ttl().compareTo(MAX_PRESIGNED_TTL) > 0 ? MAX_PRESIGNED_TTL : request.ttl();
+        try {
+            var signed = switch (request.method()) {
+                case GET -> s3Presigner.presignGetObject(
+                    presign -> presign
+                        .signatureDuration(ttl)
+                        .getObjectRequest(get -> get.bucket(this.getBucket()).key(path))
+                );
+                case PUT -> {
+                    PutObjectRequest put = putObjectRequest(path, request);
+                    yield s3Presigner.presignPutObject(presign -> presign.signatureDuration(ttl).putObjectRequest(put));
+                }
+            };
+
+            Map<String, String> headers = new HashMap<>();
+            signed.signedHeaders().forEach((name, values) ->
+            {
+                if (!"host".equalsIgnoreCase(name)) {
+                    headers.put(name, String.join(",", values));
+                }
+            });
+            return Optional.of(PresignedRequest.builder().method(request.method()).url(signed.url().toURI()).headers(headers).build());
+        } catch (SdkClientException | URISyntaxException e) {
+            throw new IOException(e);
+        }
+    }
+
+    private PutObjectRequest putObjectRequest(String path, PresignRequest request) throws IOException {
+        Long contentLength = request.contentLength();
+        if (contentLength != null && contentLength > MAX_SINGLE_PUT_SIZE) {
+            throw new IllegalArgumentException(
+                "A presigned upload to S3 carries at most %d bytes, but '%s' is %d bytes long.".formatted(MAX_SINGLE_PUT_SIZE, request.uri(), contentLength)
+            );
+        }
+
+        mkdirs(path);
+        return PutObjectRequest.builder()
+            .bucket(this.getBucket())
+            .key(path)
+            .metadata(MetadataUtils.toStoredMetadata(request.metadata()))
+            .contentLength(contentLength)
+            .build();
+    }
+
     private void mkdirs(String path) throws IOException {
         if (!path.endsWith("/")) {
             path = path.substring(0, path.lastIndexOf("/") + 1);
@@ -836,6 +900,10 @@ public class S3Storage implements S3Config, StorageInterface {
             } catch (Exception e) {
                 LOG.warn("Failed to close S3Storage", e);
             }
+        }
+
+        if (this.s3Presigner != null) {
+            this.s3Presigner.close();
         }
     }
 }
