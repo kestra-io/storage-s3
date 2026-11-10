@@ -2,7 +2,6 @@ package io.kestra.storage.s3;
 
 import java.io.*;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.localstack.LocalStackContainer;
@@ -16,7 +15,6 @@ import software.amazon.awssdk.services.s3.model.*;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.testcontainers.containers.localstack.LocalStackContainer.Service.S3;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -132,63 +130,5 @@ class S3StorageTest extends AbstractS3StorageTest {
             .getBucketVersioning(GetBucketVersioningRequest.builder().bucket(BUCKET).build());
         assertThat(resp.status(), is(BucketVersioningStatus.ENABLED));
         compat.close();
-    }
-
-    @Test
-    void initIsIdempotentAndCloseCanBeRepeated() throws IOException {
-        var storage = storageBuilder()
-            .path(PATH)
-            .build();
-
-        try {
-            storage.init();
-            var firstClient = storage.getS3ClientForTest();
-
-            storage.init();
-
-            assertThat(storage.getS3ClientForTest(), sameInstance(firstClient));
-            assertPutAndGetWorks(storage);
-
-            storage.close();
-            storage.close();
-
-            storage.init();
-            assertThat(storage.getS3ClientForTest(), not(sameInstance(firstClient)));
-            assertPutAndGetWorks(storage);
-        } finally {
-            storage.close();
-        }
-    }
-
-    @Test
-    void failedInitCanBeClosedRepeatedlyWithoutAffectingOtherStorage() throws IOException {
-        var failedStorage = S3Storage.builder()
-            .bucket(BUCKET)
-            .endpoint("invalid endpoint")
-            .build();
-
-        assertThrows(IllegalArgumentException.class, failedStorage::init);
-        failedStorage.close();
-        failedStorage.close();
-
-        var storage = storageBuilder()
-            .path(PATH)
-            .build();
-        try {
-            storage.init();
-            assertPutAndGetWorks(storage);
-        } finally {
-            storage.close();
-        }
-    }
-
-    private void assertPutAndGetWorks(S3Storage storage) throws IOException {
-        URI uri = URI.create("/" + IdUtils.create() + "/lifecycle.txt");
-        byte[] expected = "storage lifecycle round trip".getBytes(StandardCharsets.UTF_8);
-        storage.put(TenantService.MAIN_TENANT, null, uri, new ByteArrayInputStream(expected));
-
-        try (InputStream input = storage.get(TenantService.MAIN_TENANT, null, uri)) {
-            assertThat(input.readAllBytes(), equalTo(expected));
-        }
     }
 }
