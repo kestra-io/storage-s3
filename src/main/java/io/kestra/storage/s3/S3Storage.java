@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -86,7 +87,6 @@ public class S3Storage implements S3Config, StorageInterface {
     private boolean forcePathStyle;
 
     private boolean s3FilesCompatible;
-    private boolean crtShutDownRefAcquired;
 
     /**
      * Checks folder markers with a LIST instead of a HEAD when writing. Needed by servers such as SeaweedFS that keep answering 200 on a deleted marker,
@@ -105,21 +105,25 @@ public class S3Storage implements S3Config, StorageInterface {
     @Getter(AccessLevel.PRIVATE)
     private S3AsyncClient s3AsyncClient;
 
+    @Hidden
+    @Getter(AccessLevel.NONE)
+    private final AtomicBoolean crtShutdownRefAcquired = new AtomicBoolean(false);
+
     /**
      * {@inheritDoc}
      **/
     @Override
     public synchronized void init() throws IOException {
-        if (crtShutDownRefAcquired) {
+        if (!crtShutdownRefAcquired.compareAndSet(false, true)) {
             return;
         }
 
-        CRT.acquireShutdownRef();
-        crtShutDownRefAcquired = true;
-
         try {
+            CRT.acquireShutdownRef();
+          
             this.s3Client = S3ClientFactory.getS3Client(this);
             this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
+            
             if (s3FilesCompatible) {
                 enableBucketVersioning();
             }
@@ -853,9 +857,8 @@ public class S3Storage implements S3Config, StorageInterface {
                 }
             }
         } finally {
-            if (crtShutDownRefAcquired) {
+            if (crtShutdownRefAcquired.compareAndSet(true, false)) {
                 CRT.releaseShutdownRef();
-                crtShutDownRefAcquired = false;
             }
         }
     }
