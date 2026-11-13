@@ -114,16 +114,17 @@ public class S3Storage implements S3Config, StorageInterface {
      **/
     @Override
     public synchronized void init() throws IOException {
-        if (!crtShutdownRefAcquired.compareAndSet(false, true)) {
+        if (crtShutdownRefAcquired.get()) {
             return;
         }
 
+        CRT.acquireShutdownRef();
+        crtShutdownRefAcquired.set(true);
+
         try {
-            CRT.acquireShutdownRef();
-          
             this.s3Client = S3ClientFactory.getS3Client(this);
             this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
-            
+
             if (s3FilesCompatible) {
                 enableBucketVersioning();
             }
