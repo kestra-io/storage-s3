@@ -118,6 +118,7 @@ public class S3Storage implements S3Config, StorageInterface {
             return;
         }
 
+        // CRT's JVM shutdown hook tears down its event loops, so hold a ref until close() to let uploads finish during a graceful drain.
         CRT.acquireShutdownRef();
         crtShutdownRefAcquired.set(true);
 
@@ -841,26 +842,24 @@ public class S3Storage implements S3Config, StorageInterface {
 
     @Override
     public synchronized void close() {
-        try {
-            if (this.s3Client != null) {
-                try {
-                    this.s3Client.close();
-                } catch (Exception e) {
-                    LOG.warn("Failed to close S3Storage", e);
-                }
+        if (this.s3Client != null) {
+            try {
+                this.s3Client.close();
+            } catch (Exception e) {
+                LOG.warn("Failed to close S3Storage", e);
             }
+        }
 
-            if (this.s3AsyncClient != null) {
-                try {
-                    this.s3AsyncClient.close();
-                } catch (Exception e) {
-                    LOG.warn("Failed to close S3Storage", e);
-                }
+        if (this.s3AsyncClient != null) {
+            try {
+                this.s3AsyncClient.close();
+            } catch (Exception e) {
+                LOG.warn("Failed to close S3Storage", e);
             }
-        } finally {
-            if (crtShutdownRefAcquired.compareAndSet(true, false)) {
-                CRT.releaseShutdownRef();
-            }
+        }
+
+        if (crtShutdownRefAcquired.compareAndSet(true, false)) {
+            CRT.releaseShutdownRef();
         }
     }
 }
