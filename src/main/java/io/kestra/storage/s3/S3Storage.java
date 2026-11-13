@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -42,6 +43,7 @@ import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.crt.CRT;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
@@ -103,15 +105,33 @@ public class S3Storage implements S3Config, StorageInterface {
     @Getter(AccessLevel.PRIVATE)
     private S3AsyncClient s3AsyncClient;
 
+    @Hidden
+    @Getter(AccessLevel.NONE)
+    private final AtomicBoolean crtShutdownRefAcquired = new AtomicBoolean(false);
+
     /**
      * {@inheritDoc}
      **/
     @Override
-    public void init() throws IOException {
-        this.s3Client = S3ClientFactory.getS3Client(this);
-        this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
-        if (s3FilesCompatible) {
-            enableBucketVersioning();
+    public synchronized void init() throws IOException {
+        if (crtShutdownRefAcquired.get()) {
+            return;
+        }
+
+        // CRT's JVM shutdown hook tears down its event loops, so hold a ref until close() to let uploads finish during a graceful drain.
+        CRT.acquireShutdownRef();
+        crtShutdownRefAcquired.set(true);
+
+        try {
+            this.s3Client = S3ClientFactory.getS3Client(this);
+            this.s3AsyncClient = S3ClientFactory.getAsyncS3Client(this);
+
+            if (s3FilesCompatible) {
+                enableBucketVersioning();
+            }
+        } catch (Exception e) {
+            close();
+            throw e;
         }
     }
 
@@ -821,7 +841,7 @@ public class S3Storage implements S3Config, StorageInterface {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         if (this.s3Client != null) {
             try {
                 this.s3Client.close();
@@ -836,6 +856,10 @@ public class S3Storage implements S3Config, StorageInterface {
             } catch (Exception e) {
                 LOG.warn("Failed to close S3Storage", e);
             }
+        }
+
+        if (crtShutdownRefAcquired.compareAndSet(true, false)) {
+            CRT.releaseShutdownRef();
         }
     }
 }
