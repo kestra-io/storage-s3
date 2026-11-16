@@ -7,6 +7,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -838,6 +839,48 @@ public class S3Storage implements S3Config, StorageInterface {
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException("Invalid Kestra storage path: " + key, e);
         }
+    }
+
+    @Override
+    public List<URI> purgeByLastModified(String tenantId, @Nullable String namespace, URI prefix,
+        @Nullable Instant startDate, @Nullable Instant endDate, boolean dryRun) throws IOException {
+
+        String path = getPath(tenantId, prefix);
+        List<URI> matched = new ArrayList<>();
+        String continuationToken = null;
+
+        do {
+            var requestBuilder = ListObjectsV2Request.builder()
+                .bucket(this.getBucket())
+                .prefix(path);
+
+            if (continuationToken != null) {
+                requestBuilder.continuationToken(continuationToken);
+            }
+
+            var response = s3Client.listObjectsV2(requestBuilder.build());
+            continuationToken = response.isTruncated() ? response.nextContinuationToken() : null;
+
+            for (S3Object object : response.contents()) {
+                Instant lastModified = object.lastModified();
+
+                boolean matches = (startDate == null || !lastModified.isBefore(startDate))
+                    && (endDate == null || !lastModified.isAfter(endDate));
+
+                if (matches)
+                    matched.add(createUri(removeTenant(tenantId, path)));
+            }
+        } while (continuationToken != null);
+
+        if (dryRun) {
+            return matched;
+        }
+
+        for (URI uri : matched) {
+            delete(tenantId, namespace, uri);
+        }
+
+        return matched;
     }
 
     @Override
