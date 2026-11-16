@@ -846,7 +846,8 @@ public class S3Storage implements S3Config, StorageInterface {
         @Nullable Instant startDate, @Nullable Instant endDate, boolean dryRun) throws IOException {
 
         String path = getPath(tenantId, prefix);
-        List<URI> matched = new ArrayList<>();
+        List<URI> matchedList = new ArrayList<>();
+        List<ObjectIdentifier> deleteList = new ArrayList<>();
         String continuationToken = null;
 
         do {
@@ -863,24 +864,39 @@ public class S3Storage implements S3Config, StorageInterface {
 
             for (S3Object object : response.contents()) {
                 Instant lastModified = object.lastModified();
+                String key = object.key();
+
+                if (key.compareTo(path) == 0) {
+                    continue;
+                }
 
                 boolean matches = (startDate == null || !lastModified.isBefore(startDate))
                     && (endDate == null || !lastModified.isAfter(endDate));
 
-                if (matches)
-                    matched.add(createUri(removeTenant(tenantId, path)));
+                if (matches) {
+                    matchedList.add(createUri(removeTenant(tenantId, key)));
+                    deleteList.add(ObjectIdentifier.builder().key(key).build());
+                }
             }
         } while (continuationToken != null);
 
         if (dryRun) {
-            return matched;
+            return matchedList;
         }
 
-        for (URI uri : matched) {
-            delete(tenantId, namespace, uri);
+        int leftIdx = 0;
+        int len = deleteList.size();
+
+        while (leftIdx < len) {
+            int rightIdx = Math.min(S3_MAX_DELETE_BATCH_SIZE + leftIdx, len);
+            List<ObjectIdentifier> batch = new ArrayList<>(deleteList.subList(leftIdx, rightIdx));
+
+            flushVersionBatch(batch);
+
+            leftIdx = rightIdx;
         }
 
-        return matched;
+        return matchedList;
     }
 
     @Override
