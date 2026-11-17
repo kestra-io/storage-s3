@@ -1,9 +1,18 @@
 package io.kestra.storage.s3;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
+import java.time.Instant;
 
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -11,7 +20,11 @@ import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
 
 import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.model.BucketVersioningStatus;
+import software.amazon.awssdk.services.s3.model.GetBucketVersioningRequest;
+import software.amazon.awssdk.services.s3.model.GetBucketVersioningResponse;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
@@ -130,5 +143,115 @@ class S3StorageTest extends AbstractS3StorageTest {
             .getBucketVersioning(GetBucketVersioningRequest.builder().bucket(BUCKET).build());
         assertThat(resp.status(), is(BucketVersioningStatus.ENABLED));
         compat.close();
+    }
+
+    @Test
+    void purgeByLastModifiedHonorsWindow() throws IOException, InterruptedException {
+        var storage = storage(PATH);
+        String afterPrefix = IdUtils.create();
+        String beforePrefix = IdUtils.create();
+        URI afterFolder = URI.create("/" + afterPrefix + "/");
+        URI beforeFolder = URI.create("/" + beforePrefix + "/");
+
+        storage.put(
+            TenantService.MAIN_TENANT, null, URI.create(afterFolder + "before.txt"),
+            new ByteArrayInputStream(new byte[0])
+        );
+        storage.put(
+            TenantService.MAIN_TENANT, null, URI.create(beforeFolder + "before.txt"),
+            new ByteArrayInputStream(new byte[0])
+        );
+
+        Thread.sleep(1_100);
+        Instant boundary = Instant.now();
+        Thread.sleep(1_100);
+
+        storage.put(
+            TenantService.MAIN_TENANT, null, URI.create(afterFolder + "after.txt"),
+            new ByteArrayInputStream(new byte[0])
+        );
+        storage.put(
+            TenantService.MAIN_TENANT, null, URI.create(beforeFolder + "after.txt"),
+            new ByteArrayInputStream(new byte[0])
+        );
+
+        var deletedAfter = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null, afterFolder, boundary, null, false
+        );
+        assertThat(deletedAfter, hasSize(1));
+        assertThat(
+            storage.allByPrefix(TenantService.MAIN_TENANT, null, afterFolder, false)
+                .stream()
+                .map(URI::getPath)
+                .toList(),
+            contains("/" + afterPrefix + "/before.txt")
+        );
+
+        var deletedBefore = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null, beforeFolder, null, boundary, false
+        );
+        assertThat(deletedBefore, hasSize(1));
+        assertThat(
+            storage.allByPrefix(TenantService.MAIN_TENANT, null, beforeFolder, false)
+                .stream()
+                .map(URI::getPath)
+                .toList(),
+            contains("/" + beforePrefix + "/after.txt")
+        );
+    }
+
+    @Test
+    void purgeByLastModifiedDryRunDoesNotDeleteObjects() throws IOException {
+        var storage = storage(PATH);
+        URI folder = URI.create("/" + IdUtils.create() + "/");
+        storage.put(
+            TenantService.MAIN_TENANT, null, URI.create(folder + "file.txt"),
+            new ByteArrayInputStream(new byte[0])
+        );
+
+        var wouldDelete = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null, folder, null, null, true
+        );
+
+        assertThat(wouldDelete, hasSize(1));
+        assertThat(storage.allByPrefix(TenantService.MAIN_TENANT, null, folder, false), hasSize(1));
+    }
+
+    @Test
+    void purgeByLastModifiedReturnsEmptyForMissingPrefix() throws IOException {
+        var storage = storage(PATH);
+        URI missingFolder = URI.create("/" + IdUtils.create() + "/");
+
+        var deleted = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null, missingFolder, null, null, false
+        );
+
+        assertThat(deleted, is(empty()));
+    }
+
+    @Test
+    void purgeByLastModifiedHandlesMoreThan1000Objects() throws IOException {
+        var storage = storage(PATH);
+        String prefix = IdUtils.create();
+        URI folder = URI.create("/" + prefix + "/");
+        int fileCount = 1200;
+
+        for (int i = 0; i < fileCount; i++) {
+            URI uri = URI.create(folder + "file-" + i + ".txt");
+            storage.getS3ClientForTest().putObject(
+                PutObjectRequest.builder()
+                    .bucket(BUCKET)
+                    .key(storage.getPath(TenantService.MAIN_TENANT, uri))
+                    .build(),
+                RequestBody.empty()
+            );
+        }
+
+        var deleted = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null, folder, null, null, false
+        );
+
+        assertThat(deleted, hasSize(fileCount));
+        assertThat(storage.allByPrefix(TenantService.MAIN_TENANT, null, folder, false), is(empty()));
     }
 }
