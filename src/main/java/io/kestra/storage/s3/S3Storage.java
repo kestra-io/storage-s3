@@ -32,10 +32,14 @@ import io.kestra.core.storages.FileAttributes;
 import io.kestra.core.storages.StorageInterface;
 import io.kestra.core.storages.StorageObject;
 
+import io.micronaut.core.annotation.Nullable;
 import io.swagger.v3.oas.annotations.Hidden;
-import jakarta.annotation.Nullable;
 import jakarta.validation.constraints.NotEmpty;
-import lombok.*;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.extern.jackson.Jacksonized;
 import lombok.extern.slf4j.Slf4j;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
@@ -47,7 +51,29 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.crt.CRT;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.s3.model.BucketVersioningStatus;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteMarkerEntry;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
+import software.amazon.awssdk.services.s3.model.DeletedObject;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
+import software.amazon.awssdk.services.s3.model.ObjectVersion;
+import software.amazon.awssdk.services.s3.model.PutBucketVersioningRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.model.VersioningConfiguration;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.Download;
 import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
@@ -841,59 +867,139 @@ public class S3Storage implements S3Config, StorageInterface {
         }
     }
 
+    private void deleteObjectsInBatches(List<ObjectIdentifier> deleteList) throws IOException {
+        int leftIdx = 0;
+        int len = deleteList.size();
+
+        try {
+            while (leftIdx < len) {
+                int rightIdx = Math.min(S3_MAX_DELETE_BATCH_SIZE + leftIdx, len);
+                List<ObjectIdentifier> batch = new ArrayList<>(deleteList.subList(leftIdx, rightIdx));
+
+                flushVersionBatch(batch);
+
+                leftIdx = rightIdx;
+            }
+        } catch (IOException e) {
+            throw e;
+        }
+    }
+
+    private List<ObjectIdentifier> enrichObjectsWithVersions(List<String> rawList) throws IOException {
+        List<ObjectIdentifier> deleteList = new ArrayList<>();
+
+        try {
+            for (String key : rawList) {
+                String keyMarker = null;
+                String versionIdMarker = null;
+                boolean truncated;
+
+                do {
+                    ListObjectVersionsRequest.Builder builder = ListObjectVersionsRequest.builder()
+                        .bucket(this.getBucket())
+                        .prefix(key);
+
+                    if (keyMarker != null) {
+                        builder.keyMarker(keyMarker);
+                    }
+
+                    if (versionIdMarker != null) {
+                        builder.versionIdMarker(versionIdMarker);
+                    }
+
+                    ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
+
+                    keyMarker = response.nextKeyMarker();
+                    versionIdMarker = response.nextVersionIdMarker();
+                    truncated = response.isTruncated();
+                    String uriKey = key.endsWith("/") ? key.substring(0, key.length() - 1) : key;
+
+                    for (ObjectVersion v : response.versions()) {
+                        if (key.equals(v.key())) {
+                            deleteList.add(
+                                ObjectIdentifier.builder()
+                                    .key(uriKey)
+                                    .versionId(v.versionId())
+                                    .build()
+                            );
+                        }
+                    }
+
+                    for (DeleteMarkerEntry dm : response.deleteMarkers()) {
+                        if (key.equals(dm.key())) {
+
+                            deleteList.add(
+                                ObjectIdentifier.builder()
+                                    .key(uriKey)
+                                    .versionId(dm.versionId())
+                                    .build()
+                            );
+                        }
+                    }
+
+                } while (truncated);
+            }
+        } catch (AwsServiceException e) {
+            throw new IOException(e);
+        }
+
+        return deleteList;
+    }
+
     @Override
     public List<URI> purgeByLastModified(String tenantId, @Nullable String namespace, URI prefix,
         @Nullable Instant startDate, @Nullable Instant endDate, boolean dryRun) throws IOException {
 
         String path = getPath(tenantId, prefix);
         List<URI> matchedList = new ArrayList<>();
+        List<String> rawList = new ArrayList<>();
         List<ObjectIdentifier> deleteList = new ArrayList<>();
         String continuationToken = null;
 
-        do {
-            var requestBuilder = ListObjectsV2Request.builder()
-                .bucket(this.getBucket())
-                .prefix(path);
+        try {
+            do {
+                var requestBuilder = ListObjectsV2Request.builder()
+                    .bucket(this.getBucket())
+                    .prefix(path);
 
-            if (continuationToken != null) {
-                requestBuilder.continuationToken(continuationToken);
-            }
-
-            var response = s3Client.listObjectsV2(requestBuilder.build());
-            continuationToken = response.isTruncated() ? response.nextContinuationToken() : null;
-
-            for (S3Object object : response.contents()) {
-                Instant lastModified = object.lastModified();
-                String key = object.key();
-
-                if (key.compareTo(path) == 0) {
-                    continue;
+                if (continuationToken != null) {
+                    requestBuilder.continuationToken(continuationToken);
                 }
 
-                boolean matches = (startDate == null || !lastModified.isBefore(startDate))
-                    && (endDate == null || !lastModified.isAfter(endDate));
+                var response = s3Client.listObjectsV2(requestBuilder.build());
+                continuationToken = response.isTruncated() ? response.nextContinuationToken() : null;
 
-                if (matches) {
-                    matchedList.add(createUri(removeTenant(tenantId, key)));
-                    deleteList.add(ObjectIdentifier.builder().key(key).build());
+                for (S3Object object : response.contents()) {
+                    Instant lastModified = object.lastModified();
+                    String key = object.key();
+
+                    if (key.compareTo(path) == 0) {
+                        continue;
+                    }
+
+                    boolean matches = (startDate == null || !lastModified.isBefore(startDate))
+                        && (endDate == null || !lastModified.isAfter(endDate));
+
+                    if (matches) {
+                        rawList.add(key);
+                        String uriKey = key.endsWith("/") ? key.substring(0, key.length() - 1) : key;
+                        matchedList.add(createUri(removeTenant(tenantId, uriKey)));
+                        deleteList.add(ObjectIdentifier.builder().key(uriKey).build());
+                    }
                 }
+            } while (continuationToken != null);
+
+            if (dryRun) {
+                return matchedList;
             }
-        } while (continuationToken != null);
 
-        if (dryRun) {
-            return matchedList;
-        }
+            if (s3FilesCompatible) {
+                deleteList = enrichObjectsWithVersions(rawList);
+            }
 
-        int leftIdx = 0;
-        int len = deleteList.size();
-
-        while (leftIdx < len) {
-            int rightIdx = Math.min(S3_MAX_DELETE_BATCH_SIZE + leftIdx, len);
-            List<ObjectIdentifier> batch = new ArrayList<>(deleteList.subList(leftIdx, rightIdx));
-
-            flushVersionBatch(batch);
-
-            leftIdx = rightIdx;
+            deleteObjectsInBatches(deleteList);
+        } catch (IOException e) {
+            throw e;
         }
 
         return matchedList;
