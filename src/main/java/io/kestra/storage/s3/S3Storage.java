@@ -7,7 +7,9 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -838,6 +840,136 @@ public class S3Storage implements S3Config, StorageInterface {
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException("Invalid Kestra storage path: " + key, e);
         }
+    }
+
+    private void deleteObjectsInBatches(List<ObjectIdentifier> deleteList) throws IOException {
+        int leftIdx = 0;
+        int len = deleteList.size();
+
+        try {
+            while (leftIdx < len) {
+                int rightIdx = Math.min(S3_MAX_DELETE_BATCH_SIZE + leftIdx, len);
+                List<ObjectIdentifier> batch = new ArrayList<>(deleteList.subList(leftIdx, rightIdx));
+
+                flushVersionBatch(batch);
+
+                leftIdx = rightIdx;
+            }
+        } catch (IOException e) {
+            throw e;
+        }
+    }
+
+    private List<ObjectIdentifier> enrichObjectsWithVersions(String prefix, List<String> rawList) throws IOException {
+        List<ObjectIdentifier> deleteList = new ArrayList<>();
+        Set<String> matchedKeys = new HashSet<>(rawList);
+        String keyMarker = null;
+        String versionIdMarker = null;
+
+        try {
+            do {
+                ListObjectVersionsRequest.Builder builder = ListObjectVersionsRequest.builder()
+                    .bucket(this.getBucket())
+                    .prefix(prefix);
+
+                if (keyMarker != null) {
+                    builder.keyMarker(keyMarker);
+                }
+                if (versionIdMarker != null) {
+                    builder.versionIdMarker(versionIdMarker);
+                }
+
+                ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
+                keyMarker = response.nextKeyMarker();
+                versionIdMarker = response.nextVersionIdMarker();
+
+                for (ObjectVersion v : response.versions()) {
+                    if (matchedKeys.contains(v.key())) {
+                        deleteList.add(
+                            ObjectIdentifier.builder()
+                                .key(v.key())
+                                .versionId(v.versionId())
+                                .build()
+                        );
+                    }
+                }
+
+                for (DeleteMarkerEntry dm : response.deleteMarkers()) {
+                    if (matchedKeys.contains(dm.key())) {
+                        deleteList.add(
+                            ObjectIdentifier.builder()
+                                .key(dm.key())
+                                .versionId(dm.versionId())
+                                .build()
+                        );
+                    }
+                }
+            } while (keyMarker != null || versionIdMarker != null);
+        } catch (AwsServiceException e) {
+            throw new IOException(e);
+        }
+
+        return deleteList;
+    }
+
+    @Override
+    public List<URI> purgeByLastModified(String tenantId, @Nullable String namespace, URI prefix,
+        @Nullable Instant startDate, @Nullable Instant endDate, boolean dryRun) throws IOException {
+
+        String path = getPath(tenantId, prefix);
+        String normalizedPrefix = path.endsWith("/") ? path : path + "/";
+        normalizedPrefix = normalizedPrefix.equals("/") ? "" : normalizedPrefix;
+        List<URI> matchedList = new ArrayList<>();
+        List<String> rawList = new ArrayList<>();
+        List<ObjectIdentifier> deleteList = new ArrayList<>();
+        String continuationToken = null;
+
+        try {
+            do {
+                var requestBuilder = ListObjectsV2Request.builder()
+                    .bucket(this.getBucket())
+                    .prefix(normalizedPrefix);
+
+                if (continuationToken != null) {
+                    requestBuilder.continuationToken(continuationToken);
+                }
+
+                var response = s3Client.listObjectsV2(requestBuilder.build());
+                continuationToken = response.isTruncated() ? response.nextContinuationToken() : null;
+
+                for (S3Object object : response.contents()) {
+                    Instant lastModified = object.lastModified();
+                    String key = object.key();
+
+                    if (key.endsWith("/") || key.compareTo(normalizedPrefix) == 0) {
+                        continue;
+                    }
+
+                    boolean matches = (startDate == null || !lastModified.isBefore(startDate))
+                        && (endDate == null || !lastModified.isAfter(endDate));
+
+                    if (matches) {
+                        rawList.add(key);
+                        matchedList.add(createUri(prefix.getPath() + key.substring(path.length())));
+                        deleteList.add(ObjectIdentifier.builder().key(key).build());
+                    }
+                }
+            } while (continuationToken != null);
+
+            if (dryRun) {
+                return matchedList;
+            }
+
+            if (s3FilesCompatible) {
+                deleteList = enrichObjectsWithVersions(normalizedPrefix, rawList);
+            }
+
+            deleteObjectsInBatches(deleteList);
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+
+        return matchedList;
     }
 
     @Override
