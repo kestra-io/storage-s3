@@ -1,18 +1,10 @@
 package io.kestra.storage.s3;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.URI;
 import java.time.Instant;
 
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.*;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -21,11 +13,7 @@ import io.kestra.core.utils.IdUtils;
 
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.services.s3.model.BucketVersioningStatus;
-import software.amazon.awssdk.services.s3.model.GetBucketVersioningRequest;
-import software.amazon.awssdk.services.s3.model.GetBucketVersioningResponse;
-import software.amazon.awssdk.services.s3.model.ListObjectVersionsRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.*;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
@@ -147,55 +135,83 @@ class S3StorageTest extends AbstractS3StorageTest {
     }
 
     @Test
-    void purgeByLastModifiedHonorsWindow() throws IOException, InterruptedException {
+    void purgeByLastModifiedHonorsWindow() throws IOException {
         var storage = storage(PATH);
         String root = IdUtils.create();
         String executionId = IdUtils.create();
+
         URI afterFolder = URI.create("/" + root + "/executions/" + executionId + "/");
+        URI folderWithoutTrailingSlash = URI.create("/" + root + "/executions/" + executionId);
         URI siblingFolder = URI.create("/" + root + "/executions/" + executionId + "-sibling/");
 
-        storage.put(
-            TenantService.MAIN_TENANT, null, URI.create(afterFolder + "before.txt"),
-            new ByteArrayInputStream(new byte[0])
-        );
-        storage.put(
-            TenantService.MAIN_TENANT, null, URI.create(siblingFolder + "keep.txt"),
-            new ByteArrayInputStream(new byte[0])
-        );
+        URI beforeFile = URI.create(afterFolder + "before.txt");
+        URI afterFile = URI.create(afterFolder + "after.txt");
+        URI siblingFile = URI.create(siblingFolder + "keep.txt");
 
-        Thread.sleep(1_100);
-        Instant boundary = Instant.now();
-        Thread.sleep(1_100);
-
+        // Create the file matching the startDate boundary.
         storage.put(
-            TenantService.MAIN_TENANT, null, URI.create(afterFolder + "after.txt"),
+            TenantService.MAIN_TENANT, null, beforeFile,
             new ByteArrayInputStream(new byte[0])
         );
 
-        var deletedAfter = storage.purgeByLastModified(
-            TenantService.MAIN_TENANT, null, afterFolder, boundary, null, false
-        );
-        assertThat(deletedAfter, hasSize(1));
-        assertThat(
-            deletedAfter.stream().map(URI::getPath).toList(),
-            contains("/" + root + "/executions/" + executionId + "/after.txt")
-        );
-        assertThat(
-            storage.allByPrefix(TenantService.MAIN_TENANT, null, afterFolder, false)
-                .stream()
-                .map(URI::getPath)
-                .toList(),
-            contains("/" + root + "/executions/" + executionId + "/before.txt")
+        Instant startDate = storage.getS3ClientForTest().headObject(
+            HeadObjectRequest.builder()
+                .bucket(BUCKET)
+                .key(storage.getPath(TenantService.MAIN_TENANT, beforeFile))
+                .build()
+        )
+            .lastModified();
+
+        // Create a sibling file that must never be deleted.
+        storage.put(
+            TenantService.MAIN_TENANT, null, siblingFile,
+            new ByteArrayInputStream(new byte[0])
         );
 
-        var deletedBefore = storage.purgeByLastModified(
-            TenantService.MAIN_TENANT, null, afterFolder, null, boundary, false
+        // Create the file matching the endDate boundary.
+        storage.put(
+            TenantService.MAIN_TENANT, null, afterFile,
+            new ByteArrayInputStream(new byte[0])
         );
-        assertThat(deletedBefore, hasSize(1));
+
+        Instant endDate = storage.getS3ClientForTest().headObject(
+            HeadObjectRequest.builder()
+                .bucket(BUCKET)
+                .key(storage.getPath(TenantService.MAIN_TENANT, afterFile))
+                .build()
+        )
+            .lastModified();
+
+        // Verify that passing a path without a trailing slash works
+        // and that the startDate boundary is inclusive.
+        var deletedAtStart = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null,
+            folderWithoutTrailingSlash, startDate, startDate, false
+        );
+
+        assertThat(deletedAtStart, hasSize(1));
         assertThat(
-            deletedBefore.stream().map(URI::getPath).toList(),
-            contains("/" + root + "/executions/" + executionId + "/before.txt")
+            deletedAtStart.stream().map(URI::getPath).toList(),
+            contains(beforeFile.getPath())
         );
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, beforeFile), is(false));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, afterFile), is(true));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, siblingFile), is(true));
+
+        // Verify that the endDate boundary is inclusive.
+        var deletedAtEnd = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null,
+            folderWithoutTrailingSlash, endDate, endDate, false
+        );
+
+        assertThat(deletedAtEnd, hasSize(1));
+        assertThat(
+            deletedAtEnd.stream().map(URI::getPath).toList(),
+            contains(afterFile.getPath())
+        );
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, afterFile), is(false));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, siblingFile), is(true));
+
         assertThat(
             storage.allByPrefix(TenantService.MAIN_TENANT, null, afterFolder, false)
                 .stream()
@@ -203,7 +219,6 @@ class S3StorageTest extends AbstractS3StorageTest {
                 .toList(),
             is(empty())
         );
-        assertThat(storage.exists(TenantService.MAIN_TENANT, null, URI.create(siblingFolder + "keep.txt")), is(true));
     }
 
     @Test

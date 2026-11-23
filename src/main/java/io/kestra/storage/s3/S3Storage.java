@@ -965,7 +965,7 @@ public class S3Storage implements S3Config, StorageInterface {
             }
 
             deleteObjectsInBatches(deleteList);
-        } catch (Exception e) {
+        } catch (AwsServiceException | SdkClientException e) {
             throw new IOException(e);
         }
 
