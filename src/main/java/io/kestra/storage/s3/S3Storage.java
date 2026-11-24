@@ -652,7 +652,18 @@ public class S3Storage implements S3Config, StorageInterface {
                     .bucket(this.getBucket())
                     .key(aggregatedPath.toString())
                     .build();
-                s3Client.putObject(putRequest, RequestBody.empty());
+                try {
+                    s3Client.putObject(putRequest, RequestBody.empty());
+                } catch (AwsServiceException exception) {
+                    // Concurrent executions rewrite the same shared parent markers (tenant/, tenant/namespace/, ...).
+                    // Some S3-compatible servers (OVHcloud) reject concurrent writes of the same key with
+                    // 409 "A conflicting conditional operation is currently in progress against this resource":
+                    // the empty marker exists either way, so the conflict is not an error.
+                    if (exception.statusCode() != 409) {
+                        throw exception;
+                    }
+                    log.debug("Folder marker '{}' written concurrently, skipped", aggregatedPath);
+                }
             }
         } catch (AwsServiceException | SdkClientException exception) {
             throw new IOException(exception);
