@@ -856,7 +856,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 leftIdx = rightIdx;
             }
         } catch (IOException e) {
-            throw e;
+            throw new IOException("Failed to purge objects in batch", e);
         }
     }
 
@@ -906,7 +906,7 @@ public class S3Storage implements S3Config, StorageInterface {
                 }
             } while (keyMarker != null || versionIdMarker != null);
         } catch (AwsServiceException e) {
-            throw new IOException(e);
+            throw new IOException(String.format("Failed to fetch versions for prefix: %s", prefix), e);
         }
 
         return deleteList;
@@ -941,7 +941,7 @@ public class S3Storage implements S3Config, StorageInterface {
                     Instant lastModified = object.lastModified();
                     String key = object.key();
 
-                    if (key.endsWith("/") || key.compareTo(normalizedPrefix) == 0) {
+                    if (key.endsWith("/")) {
                         continue;
                     }
 
@@ -966,7 +966,7 @@ public class S3Storage implements S3Config, StorageInterface {
 
             deleteObjectsInBatches(deleteList);
         } catch (AwsServiceException | SdkClientException e) {
-            throw new IOException(e);
+            throw new IOException(String.format("Failed to purge in window for tenant %s, prefix %s", tenantId, prefix), e);
         }
 
         return matchedList;

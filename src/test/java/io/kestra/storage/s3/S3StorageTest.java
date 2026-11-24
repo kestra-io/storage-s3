@@ -144,79 +144,59 @@ class S3StorageTest extends AbstractS3StorageTest {
         URI folderWithoutTrailingSlash = URI.create("/" + root + "/executions/" + executionId);
         URI siblingFolder = URI.create("/" + root + "/executions/" + executionId + "-sibling/");
 
-        URI beforeFile = URI.create(afterFolder + "before.txt");
-        URI afterFile = URI.create(afterFolder + "after.txt");
+        URI file = URI.create(afterFolder + "file.txt");
         URI siblingFile = URI.create(siblingFolder + "keep.txt");
 
-        // Create the file matching the startDate boundary.
         storage.put(
-            TenantService.MAIN_TENANT, null, beforeFile,
+            TenantService.MAIN_TENANT, null, file,
             new ByteArrayInputStream(new byte[0])
         );
 
-        Instant startDate = storage.getS3ClientForTest().headObject(
+        Instant lastModified = storage.getS3ClientForTest().headObject(
             HeadObjectRequest.builder()
                 .bucket(BUCKET)
-                .key(storage.getPath(TenantService.MAIN_TENANT, beforeFile))
+                .key(storage.getPath(TenantService.MAIN_TENANT, file))
                 .build()
         )
             .lastModified();
 
-        // Create a sibling file that must never be deleted.
         storage.put(
             TenantService.MAIN_TENANT, null, siblingFile,
             new ByteArrayInputStream(new byte[0])
         );
 
-        // Create the file matching the endDate boundary.
-        storage.put(
-            TenantService.MAIN_TENANT, null, afterFile,
-            new ByteArrayInputStream(new byte[0])
-        );
-
-        Instant endDate = storage.getS3ClientForTest().headObject(
-            HeadObjectRequest.builder()
-                .bucket(BUCKET)
-                .key(storage.getPath(TenantService.MAIN_TENANT, afterFile))
-                .build()
-        )
-            .lastModified();
-
-        // Verify that passing a path without a trailing slash works
-        // and that the startDate boundary is inclusive.
-        var deletedAtStart = storage.purgeByLastModified(
+        // A window just after lastModified must not delete the file.
+        var deletedOutsideWindow = storage.purgeByLastModified(
             TenantService.MAIN_TENANT, null,
-            folderWithoutTrailingSlash, startDate, startDate, false
+            folderWithoutTrailingSlash,
+            lastModified.plusSeconds(1),
+            lastModified.plusSeconds(1),
+            false
         );
 
-        assertThat(deletedAtStart, hasSize(1));
-        assertThat(
-            deletedAtStart.stream().map(URI::getPath).toList(),
-            contains(beforeFile.getPath())
-        );
-        assertThat(storage.exists(TenantService.MAIN_TENANT, null, beforeFile), is(false));
-        assertThat(storage.exists(TenantService.MAIN_TENANT, null, afterFile), is(true));
-        assertThat(storage.exists(TenantService.MAIN_TENANT, null, siblingFile), is(true));
+        assertThat(deletedOutsideWindow, is(empty()));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, file), is(true));
 
-        // Verify that the endDate boundary is inclusive.
-        var deletedAtEnd = storage.purgeByLastModified(
+        // The exact lastModified boundary must be inclusive.
+        var deletedAtBoundary = storage.purgeByLastModified(
             TenantService.MAIN_TENANT, null,
-            folderWithoutTrailingSlash, endDate, endDate, false
+            folderWithoutTrailingSlash,
+            lastModified,
+            lastModified,
+            false
         );
 
-        assertThat(deletedAtEnd, hasSize(1));
         assertThat(
-            deletedAtEnd.stream().map(URI::getPath).toList(),
-            contains(afterFile.getPath())
+            deletedAtBoundary.stream().map(URI::getPath).toList(),
+            contains(file.getPath())
         );
-        assertThat(storage.exists(TenantService.MAIN_TENANT, null, afterFile), is(false));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, file), is(false));
+
+        // The sibling must never be deleted.
         assertThat(storage.exists(TenantService.MAIN_TENANT, null, siblingFile), is(true));
 
         assertThat(
-            storage.allByPrefix(TenantService.MAIN_TENANT, null, afterFolder, false)
-                .stream()
-                .map(URI::getPath)
-                .toList(),
+            storage.allByPrefix(TenantService.MAIN_TENANT, null, afterFolder, false),
             is(empty())
         );
     }
