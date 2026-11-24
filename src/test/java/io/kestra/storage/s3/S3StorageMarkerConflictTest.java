@@ -35,7 +35,7 @@ class S3StorageMarkerConflictTest {
                 return switch (method.getName()) {
                     case "headObject" -> throw NoSuchKeyException.builder().statusCode(404).build();
                     case "putObject" -> {
-                        String key = ((PutObjectRequest) args[0]).key();
+                        var key = ((PutObjectRequest) args[0]).key();
                         if (rejectedMarkers.contains(key)) {
                             throw S3Exception.builder().statusCode(status).message("rejected").build();
                         }

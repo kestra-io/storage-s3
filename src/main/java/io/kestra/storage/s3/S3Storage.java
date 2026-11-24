@@ -655,14 +655,11 @@ public class S3Storage implements S3Config, StorageInterface {
                 try {
                     s3Client.putObject(putRequest, RequestBody.empty());
                 } catch (AwsServiceException exception) {
-                    // Concurrent executions rewrite the same shared parent markers (tenant/, tenant/namespace/, ...).
-                    // Some S3-compatible servers (OVHcloud) reject concurrent writes of the same key with
-                    // 409 "A conflicting conditional operation is currently in progress against this resource":
-                    // the empty marker exists either way, so the conflict is not an error.
+                    // some S3-compatible servers (OVHcloud) answer 409 to concurrent writes of the same key; the empty marker exists either way
                     if (exception.statusCode() != 409) {
                         throw exception;
                     }
-                    log.debug("Folder marker '{}' written concurrently, skipped", aggregatedPath);
+                    LOG.debug("Folder marker '{}' written concurrently, skipped", aggregatedPath);
                 }
             }
         } catch (AwsServiceException | SdkClientException exception) {
