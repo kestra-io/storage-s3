@@ -51,7 +51,7 @@ class S3StorageMarkerConflictTest {
 
     @Test
     void conflictOnParentMarkerIsIgnored() throws IOException {
-        List<String> written = new CopyOnWriteArrayList<>();
+        var written = new CopyOnWriteArrayList<String>();
         var storage = storage(Set.of(MAIN + "/", MAIN + "/a/"), 409, written);
 
         storage.createDirectory(MAIN, null, URI.create("/a/b"));
