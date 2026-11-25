@@ -841,34 +841,27 @@ public class S3Storage implements S3Config, StorageInterface {
         }
     }
 
-    private List<URI> deleteByPrefixWindow(
-        String tenantId,
-        @Nullable String namespace,
-        URI prefix,
-        @Nullable Instant startDate,
-        @Nullable Instant endDate,
-        boolean dryRun) throws IOException {
-
-        String path = getPath(tenantId, prefix);
-        String normalizedPrefix = path.endsWith("/") ? path : path + "/";
-        normalizedPrefix = normalizedPrefix.equals("/") ? "" : normalizedPrefix;
-
-        if (s3FilesCompatible) {
-            return deleteByPrefixWindowVersioned(
-                tenantId, normalizedPrefix, prefix.getPath(), startDate, endDate, dryRun
-            );
+    @Override
+    public List<URI> purgeByLastModified(String tenantId, @Nullable String namespace, URI prefix,
+        @Nullable Instant startDate, @Nullable Instant endDate, boolean dryRun) throws IOException {
+        var path = getPath(tenantId, prefix);
+        var normalizedPrefix = path.endsWith("/") ? path : "%s/".formatted(path);
+        if (normalizedPrefix.equals("/")) {
+            normalizedPrefix = "";
         }
 
-        List<URI> matchedList = new ArrayList<>();
-        String continuationToken = null;
-
         try {
+            if (s3FilesCompatible) {
+                return purgeVersionsByLastModified(normalizedPrefix, prefix.getPath(), startDate, endDate, dryRun);
+            }
+
+            var matched = new ArrayList<URI>();
+            String continuationToken = null;
             do {
                 var requestBuilder = ListObjectsV2Request.builder()
                     .bucket(this.getBucket())
                     .prefix(normalizedPrefix)
                     .maxKeys(S3_MAX_DELETE_BATCH_SIZE);
-
                 if (continuationToken != null) {
                     requestBuilder.continuationToken(continuationToken);
                 }
@@ -876,24 +869,11 @@ public class S3Storage implements S3Config, StorageInterface {
                 var response = s3Client.listObjectsV2(requestBuilder.build());
                 continuationToken = response.isTruncated() ? response.nextContinuationToken() : null;
 
-                List<ObjectIdentifier> deleteList = new ArrayList<>();
-                for (S3Object object : response.contents()) {
-                    String key = object.key();
-                    Instant lastModified = object.lastModified();
-                    boolean matches = !key.endsWith("/")
-                        && (startDate == null || !lastModified.isBefore(startDate))
-                        && (endDate == null || !lastModified.isAfter(endDate));
-
-                    if (matches) {
-                        matchedList.add(
-                            createUri(
-                                prefix.getPath() + (prefix.getPath().endsWith("/") ? "" : "/")
-                                    + key.substring(normalizedPrefix.length())
-                            )
-                        );
-                        if (!dryRun) {
-                            deleteList.add(ObjectIdentifier.builder().key(key).build());
-                        }
+                var deleteList = new ArrayList<ObjectIdentifier>();
+                for (var object : response.contents()) {
+                    if (!object.key().endsWith("/") && isInWindow(object.lastModified(), startDate, endDate)) {
+                        matched.add(purgedUri(prefix.getPath(), normalizedPrefix, object.key()));
+                        deleteList.add(ObjectIdentifier.builder().key(object.key()).build());
                     }
                 }
 
@@ -902,114 +882,84 @@ public class S3Storage implements S3Config, StorageInterface {
                 }
             } while (continuationToken != null);
 
-            return matchedList;
+            return matched;
         } catch (AwsServiceException | SdkClientException e) {
-            throw new IOException(
-                String.format("Failed to purge in window for tenant %s, prefix %s", tenantId, prefix),
-                e
-            );
+            throw new IOException("Failed to purge objects under %s.".formatted(prefix), e);
         }
     }
 
-    private List<URI> deleteByPrefixWindowVersioned(
-        String tenantId,
-        String path,
-        String uriPrefix,
-        @Nullable Instant startDate,
-        @Nullable Instant endDate,
-        boolean dryRun) throws IOException {
-        try {
-            List<ObjectIdentifier> toDelete = new ArrayList<>();
-            Set<String> matchedKeys = new LinkedHashSet<>();
-            String keyMarker = null;
-            String versionIdMarker = null;
-
-            do {
-                ListObjectVersionsRequest.Builder builder = ListObjectVersionsRequest.builder()
-                    .bucket(this.getBucket())
-                    .prefix(path);
-
-                if (keyMarker != null) {
-                    builder.keyMarker(keyMarker);
-                }
-                if (versionIdMarker != null) {
-                    builder.versionIdMarker(versionIdMarker);
-                }
-
-                ListObjectVersionsResponse response = s3Client.listObjectVersions(builder.build());
-                keyMarker = response.nextKeyMarker();
-                versionIdMarker = response.nextVersionIdMarker();
-
-                for (ObjectVersion version : response.versions()) {
-                    if (
-                        !version.key().endsWith("/") && Boolean.TRUE.equals(version.isLatest())
-                            && (startDate == null || !version.lastModified().isBefore(startDate))
-                            && (endDate == null || !version.lastModified().isAfter(endDate))
-                    ) {
-                        matchedKeys.add(version.key());
-                    }
-                }
-                for (DeleteMarkerEntry marker : response.deleteMarkers()) {
-                    if (
-                        !marker.key().endsWith("/") && Boolean.TRUE.equals(marker.isLatest())
-                            && (startDate == null || !marker.lastModified().isBefore(startDate))
-                            && (endDate == null || !marker.lastModified().isAfter(endDate))
-                    ) {
-                        matchedKeys.add(marker.key());
-                    }
-                }
-
-                if (!dryRun) {
-                    for (ObjectVersion version : response.versions()) {
-                        if (matchedKeys.contains(version.key())) {
-                            toDelete.add(
-                                ObjectIdentifier.builder()
-                                    .key(version.key())
-                                    .versionId(version.versionId())
-                                    .build()
-                            );
-                            if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
-                                flushVersionBatch(toDelete);
-                            }
-                        }
-                    }
-                    for (DeleteMarkerEntry marker : response.deleteMarkers()) {
-                        if (matchedKeys.contains(marker.key())) {
-                            toDelete.add(
-                                ObjectIdentifier.builder()
-                                    .key(marker.key())
-                                    .versionId(marker.versionId())
-                                    .build()
-                            );
-                            if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
-                                flushVersionBatch(toDelete);
-                            }
-                        }
-                    }
-                }
-            } while (keyMarker != null || versionIdMarker != null);
-
-            flushVersionBatch(toDelete);
-
-            return matchedKeys.stream()
-                .map(
-                    key -> createUri(
-                        uriPrefix + (uriPrefix.endsWith("/") ? "" : "/") + key.substring(path.length())
-                    )
-                )
-                .toList();
-        } catch (AwsServiceException | SdkClientException e) {
-            throw new IOException(
-                String.format("Failed to purge in window for tenant %s, prefix %s", tenantId, path), e
-            );
-        }
-    }
-
-    @Override
-    public List<URI> purgeByLastModified(String tenantId, @Nullable String namespace, URI prefix,
+    private List<URI> purgeVersionsByLastModified(String normalizedPrefix, String uriPrefix,
         @Nullable Instant startDate, @Nullable Instant endDate, boolean dryRun) throws IOException {
+        var toDelete = new ArrayList<ObjectIdentifier>();
+        var matchedKeys = new LinkedHashSet<String>();
+        String keyMarker = null;
+        String versionIdMarker = null;
 
-        return deleteByPrefixWindow(tenantId, namespace, prefix, startDate, endDate, dryRun);
+        do {
+            var builder = ListObjectVersionsRequest.builder()
+                .bucket(this.getBucket())
+                .prefix(normalizedPrefix);
+            if (keyMarker != null) {
+                builder.keyMarker(keyMarker);
+            }
+            if (versionIdMarker != null) {
+                builder.versionIdMarker(versionIdMarker);
+            }
+
+            var response = s3Client.listObjectVersions(builder.build());
+            keyMarker = response.nextKeyMarker();
+            versionIdMarker = response.nextVersionIdMarker();
+
+            // A key's latest entry comes first in the listing, so the key is matched before its older versions are seen.
+            for (var version : response.versions()) {
+                if (!version.key().endsWith("/") && Boolean.TRUE.equals(version.isLatest())
+                    && isInWindow(version.lastModified(), startDate, endDate)) {
+                    matchedKeys.add(version.key());
+                }
+            }
+            for (var marker : response.deleteMarkers()) {
+                if (!marker.key().endsWith("/") && Boolean.TRUE.equals(marker.isLatest())
+                    && isInWindow(marker.lastModified(), startDate, endDate)) {
+                    matchedKeys.add(marker.key());
+                }
+            }
+
+            if (dryRun) {
+                continue;
+            }
+            for (var version : response.versions()) {
+                if (matchedKeys.contains(version.key())) {
+                    toDelete.add(ObjectIdentifier.builder().key(version.key()).versionId(version.versionId()).build());
+                    if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
+                        flushVersionBatch(toDelete);
+                    }
+                }
+            }
+            for (var marker : response.deleteMarkers()) {
+                if (matchedKeys.contains(marker.key())) {
+                    toDelete.add(ObjectIdentifier.builder().key(marker.key()).versionId(marker.versionId()).build());
+                    if (toDelete.size() >= S3_MAX_DELETE_BATCH_SIZE) {
+                        flushVersionBatch(toDelete);
+                    }
+                }
+            }
+        } while (keyMarker != null || versionIdMarker != null);
+
+        flushVersionBatch(toDelete);
+
+        return matchedKeys.stream()
+            .map(key -> purgedUri(uriPrefix, normalizedPrefix, key))
+            .toList();
+    }
+
+    private static boolean isInWindow(Instant lastModified, @Nullable Instant startDate, @Nullable Instant endDate) {
+        return (startDate == null || !lastModified.isBefore(startDate))
+            && (endDate == null || !lastModified.isAfter(endDate));
+    }
+
+    private URI purgedUri(String uriPrefix, String normalizedPrefix, String key) {
+        var separator = uriPrefix.endsWith("/") ? "" : "/";
+        return createUri("%s%s%s".formatted(uriPrefix, separator, key.substring(normalizedPrefix.length())));
     }
 
     @Override
