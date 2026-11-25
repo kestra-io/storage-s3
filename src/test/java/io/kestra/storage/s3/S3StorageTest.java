@@ -2,6 +2,7 @@ package io.kestra.storage.s3;
 
 import java.io.*;
 import java.net.URI;
+import java.time.Instant;
 
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.localstack.LocalStackContainer;
@@ -11,6 +12,7 @@ import io.kestra.core.tenant.TenantService;
 import io.kestra.core.utils.IdUtils;
 
 import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.*;
 
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -130,5 +132,161 @@ class S3StorageTest extends AbstractS3StorageTest {
             .getBucketVersioning(GetBucketVersioningRequest.builder().bucket(BUCKET).build());
         assertThat(resp.status(), is(BucketVersioningStatus.ENABLED));
         compat.close();
+    }
+
+    @Test
+    void purgeByLastModifiedHonorsWindow() throws IOException {
+        var storage = storage(PATH);
+        var folder = "/%s/executions/%s".formatted(IdUtils.create(), IdUtils.create());
+        var file = URI.create("%s/file.txt".formatted(folder));
+        var siblingFile = URI.create("%s-sibling/keep.txt".formatted(folder));
+        storage.put(TenantService.MAIN_TENANT, null, file, new ByteArrayInputStream(new byte[0]));
+        storage.put(TenantService.MAIN_TENANT, null, siblingFile, new ByteArrayInputStream(new byte[0]));
+        var lastModified = lastModified(storage, file);
+
+        var outsideWindow = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null, URI.create(folder), lastModified.plusSeconds(1), lastModified.plusSeconds(1), false
+        );
+        assertThat(outsideWindow, is(empty()));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, file), is(true));
+
+        var atBoundary = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null, URI.create(folder), lastModified, lastModified, false
+        );
+        assertThat(atBoundary.stream().map(URI::getPath).toList(), contains(file.getPath()));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, file), is(false));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, siblingFile), is(true));
+    }
+
+    @Test
+    void purgeByLastModifiedDeletesEveryVersionInCompatibleMode() throws IOException {
+        var storage = storageBuilder().path(PATH).s3FilesCompatible(true).build();
+        storage.init();
+
+        try {
+            var folder = URI.create("/%s/executions/%s/".formatted(IdUtils.create(), IdUtils.create()));
+            var file = URI.create("%sfile.txt".formatted(folder));
+            storage.put(TenantService.MAIN_TENANT, null, file, new ByteArrayInputStream("first".getBytes()));
+            storage.put(TenantService.MAIN_TENANT, null, file, new ByteArrayInputStream("second".getBytes()));
+
+            var deleted = storage.purgeByLastModified(TenantService.MAIN_TENANT, null, folder, null, null, false);
+
+            assertThat(deleted.stream().map(URI::getPath).toList(), contains(file.getPath()));
+            assertThat(storage.allByPrefix(TenantService.MAIN_TENANT, null, folder, false), is(empty()));
+            assertThat(versionCount(storage, file), is(0));
+        } finally {
+            storage.close();
+        }
+    }
+
+    @Test
+    void purgeByLastModifiedHonorsWindowInCompatibleMode() throws IOException {
+        var storage = storageBuilder().path(PATH).s3FilesCompatible(true).build();
+        storage.init();
+
+        try {
+            var folder = URI.create("/%s/executions/%s/".formatted(IdUtils.create(), IdUtils.create()));
+            var file = URI.create("%sfile.txt".formatted(folder));
+            storage.put(TenantService.MAIN_TENANT, null, file, new ByteArrayInputStream("first".getBytes()));
+            storage.put(TenantService.MAIN_TENANT, null, file, new ByteArrayInputStream("second".getBytes()));
+            var lastModified = lastModified(storage, file);
+
+            var outsideWindow = storage.purgeByLastModified(
+                TenantService.MAIN_TENANT, null, folder, lastModified.plusSeconds(1), lastModified.plusSeconds(1), false
+            );
+            assertThat(outsideWindow, is(empty()));
+            assertThat(versionCount(storage, file), is(2));
+
+            var atBoundary = storage.purgeByLastModified(TenantService.MAIN_TENANT, null, folder, lastModified, lastModified, false);
+            assertThat(atBoundary.stream().map(URI::getPath).toList(), contains(file.getPath()));
+            assertThat(versionCount(storage, file), is(0));
+        } finally {
+            storage.close();
+        }
+    }
+
+    @Test
+    void purgeByLastModifiedDryRunDoesNotDeleteObjects() throws IOException {
+        var storage = storage(PATH);
+        var folder = URI.create("/%s/".formatted(IdUtils.create()));
+        storage.put(TenantService.MAIN_TENANT, null, URI.create("%sfile.txt".formatted(folder)), new ByteArrayInputStream(new byte[0]));
+
+        var wouldDelete = storage.purgeByLastModified(TenantService.MAIN_TENANT, null, folder, null, null, true);
+
+        assertThat(wouldDelete, hasSize(1));
+        assertThat(storage.allByPrefix(TenantService.MAIN_TENANT, null, folder, false), hasSize(1));
+    }
+
+    @Test
+    void purgeByLastModifiedReturnsEmptyForMissingPrefix() throws IOException {
+        var storage = storage(PATH);
+
+        var deleted = storage.purgeByLastModified(
+            TenantService.MAIN_TENANT, null, URI.create("/%s/".formatted(IdUtils.create())), null, null, false
+        );
+
+        assertThat(deleted, is(empty()));
+    }
+
+    @Test
+    void purgeByLastModifiedDoesNotMatchSiblingPrefix() throws IOException {
+        var storage = storage(PATH);
+        var folder = "/%s".formatted(IdUtils.create());
+        var sibling = URI.create("%ssibling/keep.txt".formatted(folder));
+        storage.put(TenantService.MAIN_TENANT, null, URI.create("%s/delete.txt".formatted(folder)), new ByteArrayInputStream(new byte[0]));
+        storage.put(TenantService.MAIN_TENANT, null, sibling, new ByteArrayInputStream(new byte[0]));
+
+        var deleted = storage.purgeByLastModified(TenantService.MAIN_TENANT, null, URI.create(folder), null, null, false);
+
+        assertThat(deleted, hasSize(1));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, sibling), is(true));
+    }
+
+    @Test
+    void purgeByLastModifiedDoesNotReturnDirectoryMarkers() throws IOException {
+        var storage = storage(PATH);
+        var target = URI.create("/%s/".formatted(IdUtils.create()));
+        var marker = URI.create("%sexec1/".formatted(target));
+        storage.getS3ClientForTest().putObject(
+            PutObjectRequest.builder().bucket(BUCKET).key(storage.getPath(TenantService.MAIN_TENANT, marker)).build(),
+            RequestBody.empty()
+        );
+
+        var deleted = storage.purgeByLastModified(TenantService.MAIN_TENANT, null, target, null, null, false);
+
+        assertThat(deleted, is(empty()));
+        assertThat(storage.exists(TenantService.MAIN_TENANT, null, marker), is(true));
+    }
+
+    @Test
+    void purgeByLastModifiedHandlesMoreThan1000Objects() throws IOException {
+        var storage = storage(PATH);
+        var folder = URI.create("/%s/".formatted(IdUtils.create()));
+        var fileCount = 1200;
+        for (var i = 0; i < fileCount; i++) {
+            var uri = URI.create("%sfile-%d.txt".formatted(folder, i));
+            storage.getS3ClientForTest().putObject(
+                PutObjectRequest.builder().bucket(BUCKET).key(storage.getPath(TenantService.MAIN_TENANT, uri)).build(),
+                RequestBody.empty()
+            );
+        }
+
+        var deleted = storage.purgeByLastModified(TenantService.MAIN_TENANT, null, folder, null, null, false);
+
+        assertThat(deleted, hasSize(fileCount));
+        assertThat(storage.allByPrefix(TenantService.MAIN_TENANT, null, folder, false), is(empty()));
+    }
+
+    private static Instant lastModified(S3Storage storage, URI file) {
+        return storage.getS3ClientForTest().headObject(
+            HeadObjectRequest.builder().bucket(BUCKET).key(storage.getPath(TenantService.MAIN_TENANT, file)).build()
+        ).lastModified();
+    }
+
+    private static int versionCount(S3Storage storage, URI file) {
+        var versions = storage.getS3ClientForTest().listObjectVersions(
+            ListObjectVersionsRequest.builder().bucket(BUCKET).prefix(storage.getPath(TenantService.MAIN_TENANT, file)).build()
+        );
+        return versions.versions().size() + versions.deleteMarkers().size();
     }
 }
