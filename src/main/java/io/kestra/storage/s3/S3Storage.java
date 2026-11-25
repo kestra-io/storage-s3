@@ -653,7 +653,15 @@ public class S3Storage implements S3Config, StorageInterface {
                     .bucket(this.getBucket())
                     .key(aggregatedPath.toString())
                     .build();
-                s3Client.putObject(putRequest, RequestBody.empty());
+                try {
+                    s3Client.putObject(putRequest, RequestBody.empty());
+                } catch (AwsServiceException exception) {
+                    // some S3-compatible servers (OVHcloud) answer 409 to concurrent writes of the same key; the empty marker exists either way
+                    if (exception.statusCode() != 409) {
+                        throw exception;
+                    }
+                    LOG.debug("Folder marker '{}' written concurrently, skipped", aggregatedPath);
+                }
             }
         } catch (AwsServiceException | SdkClientException exception) {
             throw new IOException(exception);
