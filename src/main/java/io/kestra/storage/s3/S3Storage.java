@@ -238,9 +238,35 @@ public class S3Storage implements S3Config, StorageInterface {
             if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 404) {
                 throw new FileNotFoundException();
             }
+            // the CRT client may read the first part with a range, which some S3-compatible servers answer with a 416
+            // on an empty object: an empty file is a valid one, as on the success path above
+            if (e.getCause() instanceof S3Exception s3Exception && s3Exception.statusCode() == 416) {
+                StorageObject empty = this.emptyObject(path);
+                if (empty != null) {
+                    return empty;
+                }
+            }
             throw new IOException(e);
         } catch (InterruptedException e) {
             throw new IOException(e);
+        }
+    }
+
+    @Nullable
+    private StorageObject emptyObject(String path) throws IOException {
+        try {
+            HeadObjectResponse head = s3Client.headObject(
+                HeadObjectRequest.builder().bucket(this.getBucket()).key(path).build()
+            );
+            if (head.contentLength() == null || head.contentLength() != 0) {
+                return null;
+            }
+            log.debug("Empty object '{}' read through HEAD after a 416", path);
+            return new StorageObject(MetadataUtils.toRetrievedMetadata(head.metadata()), InputStream.nullInputStream());
+        } catch (NoSuchKeyException exception) {
+            throw new FileNotFoundException();
+        } catch (AwsServiceException | SdkClientException exception) {
+            throw new IOException(exception);
         }
     }
 
